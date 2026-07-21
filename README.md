@@ -66,3 +66,9 @@ The karaoke deck is intentionally isolated from the two-deck Auto Mix bus. Futur
 
 - Singer queue and key-change controls
 - BPM/key analysis, beat grids, waveform caching, cue points, loops, and true beat-synced transitions
+<img width="1552" height="932" alt="image" src="https://github.com/user-attachments/assets/87137381-bf45-47bb-88a1-44e03c6c9a53" />
+<img width="1362" height="913" alt="image" src="https://github.com/user-attachments/assets/c5484ffb-e3d4-4336-9734-fe4b384a6eaa" />
+<img width="962" height="572" alt="image" src="https://github.com/user-attachments/assets/5b3d180f-5330-4637-b334-1c0cf7bdead9" />
+<img width="1402" height="882" alt="image" src="https://github.com/user-attachments/assets/b4a578dc-e22c-4224-902a-df4307647d08" />
+
+
