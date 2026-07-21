@@ -1,5 +1,5 @@
-# YouTube DJ — dual-deck Python mixer
-
+# EncoreMix 2026 — dual-deck Python mixer
+Because VisualBasic is DEAD and I like shit my way.
 A working first-phase desktop DJ application with:
 
 - Two independent Qt Multimedia audio decks using Qt's FFmpeg backend
@@ -60,9 +60,7 @@ python main.py
 python -m pip install --upgrade yt-dlp
 ```
 
-- Use the program only with media you are authorized to access and in accordance with applicable platform terms and copyright law.
-
-## Next engineering phase
+## Next phase
 
 The karaoke deck is intentionally isolated from the two-deck Auto Mix bus. Future phases can add:
 
