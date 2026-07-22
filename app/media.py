@@ -145,6 +145,8 @@ def _safe_metadata_value(metadata: QMediaMetaData, key: QMediaMetaData.Key) -> o
 
 
 class QtMediaDeckEngine(QObject):
+    _MAX_STREAM_RETRIES = 3
+
     positionChanged = Signal(int, int)
     stateChanged = Signal(str)
     loaded = Signal(object)
@@ -165,6 +167,13 @@ class QtMediaDeckEngine(QObject):
         self._crossfade_factor = 1.0
         self._stream_info = "VIDEO STREAM" if video else "AUDIO STREAM"
         self._showing_stream_info = False
+        self._play_requested = False
+        self._retry_attempt = 0
+        self._retry_pending = False
+        self._retry_position_ms = 0
+        self._failure_reported = False
+        self._resolving = False
+        self._user_stopped = True
 
         self._player = QMediaPlayer(self)
         self._audio_output = QAudioOutput(self)
@@ -173,11 +182,15 @@ class QtMediaDeckEngine(QObject):
         self._player.durationChanged.connect(self._duration_changed)
         self._player.playbackStateChanged.connect(self._playback_state_changed)
         self._player.mediaStatusChanged.connect(self._media_status_changed)
+        self._player.mediaStatusChanged.connect(self._resume_after_reconnect)
         self._player.metaDataChanged.connect(self._metadata_changed)
         self._player.errorOccurred.connect(self._player_error)
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(2500)
         self._status_timer.timeout.connect(self._alternate_playing_status)
+        self._retry_timer = QTimer(self)
+        self._retry_timer.setSingleShot(True)
+        self._retry_timer.timeout.connect(self._retry_stream)
         self._apply_volume()
 
     @property
@@ -199,9 +212,19 @@ class QtMediaDeckEngine(QObject):
 
     def load(self, track: Track, autoplay: bool = False) -> None:
         self.stop()
+        self._retry_attempt = 0
+        self._retry_pending = False
+        self._retry_position_ms = 0
+        self._failure_reported = False
+        self._play_requested = autoplay
+        self._user_stopped = False
+        self._begin_resolve(track, autoplay)
+
+    def _begin_resolve(self, track: Track, autoplay: bool) -> None:
         self._generation += 1
         self._track = track
         self._ready = False
+        self._resolving = True
         self._autoplay_after_resolve = autoplay
         self._stream_info = "VIDEO STREAM" if self._video else "AUDIO STREAM"
         self.stateChanged.emit("LOADED")
@@ -222,7 +245,9 @@ class QtMediaDeckEngine(QObject):
             track.duration_seconds = duration
         self._stream_info = stream_info
         self._player.setSource(QUrl(stream_url))
+        self._resolving = False
         self._ready = True
+        self._retry_pending = False
         self._apply_volume()
         self.stateChanged.emit("LOADED")
         self.loaded.emit(track)
@@ -234,11 +259,14 @@ class QtMediaDeckEngine(QObject):
         self._resolve_tasks.pop(generation, None)
         if generation != self._generation:
             return
+        self._resolving = False
+        self._retry_pending = False
         self._ready = False
-        self.stateChanged.emit("STREAM ERROR")
-        self.error.emit(f"Could not resolve this track: {message}")
+        self._schedule_stream_retry(f"Could not resolve a fresh stream: {message}")
 
     def play(self) -> None:
+        self._play_requested = True
+        self._user_stopped = False
         if not self._ready:
             if self._track:
                 self.load(self._track, autoplay=True)
@@ -246,9 +274,20 @@ class QtMediaDeckEngine(QObject):
         self._player.play()
 
     def pause(self) -> None:
+        self._play_requested = False
         self._player.pause()
 
     def stop(self) -> None:
+        self._play_requested = False
+        self._autoplay_after_resolve = False
+        self._user_stopped = True
+        self._retry_pending = False
+        self._retry_timer.stop()
+        if self._resolving:
+            # Resolution work cannot be forcibly killed safely, so invalidate
+            # its generation and ignore its eventual callback.
+            self._generation += 1
+            self._resolving = False
         self._player.stop()
         self._status_timer.stop()
         if self._track:
@@ -340,6 +379,10 @@ class QtMediaDeckEngine(QObject):
     @Slot(QMediaPlayer.MediaStatus)
     def _media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            if self._retry_pending:
+                return
+            self._play_requested = False
+            self._user_stopped = True
             self.ended.emit()
 
     @Slot(QMediaPlayer.Error, str)
@@ -347,5 +390,59 @@ class QtMediaDeckEngine(QObject):
         if error == QMediaPlayer.Error.NoError:
             return
         self._ready = False
-        self.stateChanged.emit("PLAYBACK ERROR")
-        self.error.emit(f"Qt Multimedia playback error: {message or error.name}")
+        self._schedule_stream_retry(message or error.name)
+
+    def _schedule_stream_retry(self, reason: str) -> None:
+        if (
+            self._user_stopped
+            or self._retry_pending
+            or self._resolving
+            or self._failure_reported
+        ):
+            return
+        track = self._track
+        is_local = bool(
+            track
+            and (track.source == "Local file" or track.webpage_url.startswith("file:"))
+        )
+        if not track or is_local or self._retry_attempt >= self._MAX_STREAM_RETRIES:
+            self._failure_reported = True
+            self._retry_pending = False
+            self._status_timer.stop()
+            self.stateChanged.emit("PLAYBACK ERROR")
+            self.error.emit(
+                "Playback stopped safely after the stream connection failed. "
+                f"{reason}"
+            )
+            return
+
+        self._retry_attempt += 1
+        self._retry_pending = True
+        self._retry_position_ms = max(self._retry_position_ms, self._player.position())
+        self._status_timer.stop()
+        self._player.stop()
+        self._player.setSource(QUrl())
+        self.stateChanged.emit(
+            f"RECONNECTING {self._retry_attempt}/{self._MAX_STREAM_RETRIES}"
+        )
+        # A short exponential delay prevents Qt/FFmpeg from hammering a socket
+        # that Windows has just reset while keeping recovery quick for the DJ.
+        self._retry_timer.start(500 * (2 ** (self._retry_attempt - 1)))
+
+    @Slot()
+    def _retry_stream(self) -> None:
+        if not self._retry_pending or not self._track:
+            return
+        self._begin_resolve(self._track, autoplay=self._play_requested)
+
+    @Slot(QMediaPlayer.MediaStatus)
+    def _resume_after_reconnect(self, status: QMediaPlayer.MediaStatus) -> None:
+        if status not in {
+            QMediaPlayer.MediaStatus.LoadedMedia,
+            QMediaPlayer.MediaStatus.BufferedMedia,
+        }:
+            return
+        if self._retry_position_ms > 0:
+            position = self._retry_position_ms
+            self._retry_position_ms = 0
+            self._player.setPosition(position)

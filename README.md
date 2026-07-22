@@ -13,6 +13,7 @@ A working first-phase desktop DJ application with:
 - Local audio-file support
 - Persistent playlists and mixer settings
 - An independent third karaoke video deck with YouTube-only search, a manual queue, and detachable projector output
+- Reciprocal remotes: control the selected main deck from Karaoke, or karaoke playback and fades from the main mixer
 
 ## Windows requirements
 
@@ -49,10 +50,13 @@ python main.py
 5. Move the crossfader manually, or leave **AUTO MIX** enabled.
 6. With Auto Mix enabled, the opposite deck starts and the crossfader moves when the dominant deck has 10 seconds remaining.
 7. After a deck finishes, it loads the next item in its own playlist and waits for its next turn.
+8. Use **MAIN MIX REMOTE** in the karaoke window to choose a side, adjust its volume, pause/resume it, or move the main crossfader.
+9. Use **KARAOKE REMOTE** on the main mixer to pause/resume karaoke, set its volume, or fade it in/out over the selected duration.
 
 ## Important implementation notes
 
 - YouTube stream URLs expire. The application resolves a fresh audio URL whenever a track is loaded.
+- If a remote stream socket drops, playback safely re-resolves the URL and retries up to three times instead of advancing the queue or flooding the UI with errors.
 - YouTube Music search uses `ytmusicapi`, an unofficial client. Normal public search does not require account authentication.
 - Streaming availability can change because YouTube changes its site frequently. Keep `yt-dlp` current:
 

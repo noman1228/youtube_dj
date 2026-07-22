@@ -7,6 +7,7 @@ from PySide6.QtMultimedia import QVideoFrame, QVideoSink
 from PySide6.QtWidgets import (
     QDialog,
     QCheckBox,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -169,6 +171,9 @@ class KaraokeWindow(QDialog):
         title.setObjectName("AppTitle")
         root.addWidget(title)
 
+        if parent is not None and hasattr(parent, "left") and hasattr(parent, "crossfader"):
+            root.addWidget(self._build_main_remote(parent))
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_search_panel())
         splitter.addWidget(self._build_deck_panel())
@@ -182,6 +187,94 @@ class KaraokeWindow(QDialog):
         self.engine.positionChanged.connect(self._position_changed)
         self.engine.ended.connect(self._ended)
         self.engine.error.connect(lambda message: QMessageBox.warning(self, "Karaoke deck", message))
+
+    def _build_main_remote(self, main_window: QWidget) -> QWidget:
+        panel = QFrame()
+        panel.setObjectName("DeckFrame")
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(12, 9, 12, 9)
+        layout.setSpacing(10)
+
+        title = QLabel("MAIN MIX REMOTE")
+        title.setStyleSheet("font-weight:800;letter-spacing:1px;")
+        layout.addWidget(title)
+
+        side_label = QLabel("SIDE")
+        side_label.setObjectName("Subtle")
+        self.main_side = QComboBox()
+        self.main_side.addItems(["LEFT", "RIGHT"])
+        layout.addWidget(side_label)
+        layout.addWidget(self.main_side)
+
+        self.main_play_button = QPushButton("PLAY / PAUSE")
+        layout.addWidget(self.main_play_button)
+
+        volume_label = QLabel("VOLUME")
+        volume_label.setObjectName("Subtle")
+        self.main_volume = QSlider(Qt.Orientation.Horizontal)
+        self.main_volume.setRange(0, 100)
+        self.main_volume.setMaximumWidth(170)
+        layout.addWidget(volume_label)
+        layout.addWidget(self.main_volume, 1)
+
+        fade_label = QLabel("FADE")
+        fade_label.setObjectName("Subtle")
+        self.main_crossfader = QSlider(Qt.Orientation.Horizontal)
+        self.main_crossfader.setObjectName("Crossfader")
+        self.main_crossfader.setRange(main_window.crossfader.minimum(), main_window.crossfader.maximum())
+        self.main_crossfader.setValue(main_window.crossfader.value())
+        self.main_crossfader.setMaximumWidth(230)
+        layout.addWidget(QLabel("L"))
+        layout.addWidget(fade_label)
+        layout.addWidget(self.main_crossfader, 1)
+        layout.addWidget(QLabel("R"))
+
+        fade_time_label = QLabel("TIME")
+        fade_time_label.setObjectName("Subtle")
+        self.main_fade_seconds = QSpinBox()
+        self.main_fade_seconds.setRange(2, 10)
+        self.main_fade_seconds.setValue(main_window.fade_seconds.value())
+        self.main_fade_seconds.setSuffix(" s")
+        layout.addWidget(fade_time_label)
+        layout.addWidget(self.main_fade_seconds)
+
+        self.main_side.currentIndexChanged.connect(
+            lambda _index: self._sync_selected_main_volume(main_window)
+        )
+        self.main_play_button.clicked.connect(lambda: self._toggle_main_deck(main_window))
+        self.main_volume.valueChanged.connect(lambda value: self._set_main_volume(main_window, value))
+        self.main_crossfader.valueChanged.connect(main_window.crossfader.setValue)
+        main_window.crossfader.valueChanged.connect(self.main_crossfader.setValue)
+        self.main_fade_seconds.valueChanged.connect(main_window.fade_seconds.setValue)
+        main_window.fade_seconds.valueChanged.connect(self.main_fade_seconds.setValue)
+        main_window.left.gain.valueChanged.connect(
+            lambda value: self._main_gain_changed(main_window, "left", value)
+        )
+        main_window.right.gain.valueChanged.connect(
+            lambda value: self._main_gain_changed(main_window, "right", value)
+        )
+        self._sync_selected_main_volume(main_window)
+        return panel
+
+    def _selected_main_deck(self, main_window: QWidget):
+        return main_window.left if self.main_side.currentIndex() == 0 else main_window.right
+
+    def _toggle_main_deck(self, main_window: QWidget) -> None:
+        self._selected_main_deck(main_window).play()
+
+    def _set_main_volume(self, main_window: QWidget, value: int) -> None:
+        self._selected_main_deck(main_window).gain.setValue(value)
+
+    def _sync_selected_main_volume(self, main_window: QWidget) -> None:
+        value = self._selected_main_deck(main_window).gain.value()
+        self.main_volume.blockSignals(True)
+        self.main_volume.setValue(value)
+        self.main_volume.blockSignals(False)
+
+    def _main_gain_changed(self, main_window: QWidget, side: str, value: int) -> None:
+        selected_side = "left" if self.main_side.currentIndex() == 0 else "right"
+        if side == selected_side and self.main_volume.value() != value:
+            self.main_volume.setValue(value)
 
     def _build_search_panel(self) -> QWidget:
         panel = QFrame()

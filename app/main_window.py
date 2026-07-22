@@ -45,6 +45,10 @@ class MainWindow(QMainWindow):
         self._transition_to = self._CROSSFADER_MAX // 2
         self._transition_started = 0.0
         self._last_triggered_side: str | None = None
+        self._karaoke_fade_start = 100
+        self._karaoke_fade_target = 100
+        self._karaoke_fade_started = 0.0
+        self._karaoke_fade_updating = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -109,6 +113,44 @@ class MainWindow(QMainWindow):
         self.status.setWordWrap(True)
         self.status.setStyleSheet("padding:12px;background:#0c111a;border-radius:10px;font-weight:800;")
         center_layout.addWidget(self.status)
+
+        karaoke_remote = QFrame()
+        karaoke_remote.setObjectName("DeckFrame")
+        karaoke_remote_layout = QVBoxLayout(karaoke_remote)
+        karaoke_remote_layout.setContentsMargins(9, 9, 9, 9)
+        karaoke_remote_layout.setSpacing(7)
+        karaoke_remote_title = QLabel("KARAOKE REMOTE")
+        karaoke_remote_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        karaoke_remote_title.setStyleSheet("font-weight:800;letter-spacing:1px;")
+        karaoke_remote_layout.addWidget(karaoke_remote_title)
+
+        self.karaoke_play_button = QPushButton("PLAY / PAUSE")
+        self.karaoke_play_button.setObjectName("HotButton")
+        karaoke_remote_layout.addWidget(self.karaoke_play_button)
+
+        karaoke_volume_row = QHBoxLayout()
+        karaoke_volume_label = QLabel("VOL")
+        karaoke_volume_label.setObjectName("Subtle")
+        self.karaoke_volume = QSlider(Qt.Orientation.Horizontal)
+        self.karaoke_volume.setRange(0, 100)
+        self.karaoke_volume.setValue(100)
+        karaoke_volume_row.addWidget(karaoke_volume_label)
+        karaoke_volume_row.addWidget(self.karaoke_volume, 1)
+        karaoke_remote_layout.addLayout(karaoke_volume_row)
+
+        karaoke_fade_row = QHBoxLayout()
+        self.karaoke_fade_out_button = QPushButton("FADE OUT")
+        self.karaoke_fade_in_button = QPushButton("FADE IN")
+        self.karaoke_fade_seconds = QSpinBox()
+        self.karaoke_fade_seconds.setRange(1, 10)
+        self.karaoke_fade_seconds.setValue(3)
+        self.karaoke_fade_seconds.setSuffix(" s")
+        self.karaoke_fade_seconds.setToolTip("Karaoke fade duration")
+        karaoke_fade_row.addWidget(self.karaoke_fade_out_button)
+        karaoke_fade_row.addWidget(self.karaoke_fade_in_button)
+        karaoke_fade_row.addWidget(self.karaoke_fade_seconds)
+        karaoke_remote_layout.addLayout(karaoke_fade_row)
+        center_layout.addWidget(karaoke_remote)
         center_layout.addStretch(1)
 
         left_marker = QLabel("LEFT")
@@ -158,6 +200,10 @@ class MainWindow(QMainWindow):
         self.crossfader.valueChanged.connect(self._apply_crossfader)
         self.crossfader.sliderPressed.connect(self._manual_fade_started)
         self.crossfader.sliderReleased.connect(self._manual_fade_finished)
+        self.karaoke_play_button.clicked.connect(self._toggle_karaoke)
+        self.karaoke_volume.valueChanged.connect(self._set_karaoke_volume)
+        self.karaoke_fade_out_button.clicked.connect(lambda: self._start_karaoke_fade(0))
+        self.karaoke_fade_in_button.clicked.connect(lambda: self._start_karaoke_fade(100))
 
         self._automation_timer = QTimer(self)
         self._automation_timer.setInterval(200)
@@ -168,6 +214,11 @@ class MainWindow(QMainWindow):
         self._fade_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._fade_timer.setInterval(20)
         self._fade_timer.timeout.connect(self._fade_tick)
+
+        self._karaoke_fade_timer = QTimer(self)
+        self._karaoke_fade_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._karaoke_fade_timer.setInterval(20)
+        self._karaoke_fade_timer.timeout.connect(self._karaoke_fade_tick)
 
         self._apply_crossfader(self._CROSSFADER_MAX // 2)
         QTimer.singleShot(0, self._load_playlists)
@@ -184,10 +235,61 @@ class MainWindow(QMainWindow):
         self._search_dialog.focus_search()
 
     def open_karaoke(self) -> None:
+        karaoke = self._get_karaoke_window()
+        karaoke.show()
+        karaoke.raise_()
+        karaoke.activateWindow()
+
+    def _get_karaoke_window(self) -> KaraokeWindow:
         if self._karaoke_window is None:
             self._karaoke_window = KaraokeWindow(self)
-        self._karaoke_window.show()
-        self._karaoke_window.raise_()
+            self._karaoke_window.volume.setValue(self.karaoke_volume.value())
+            self._karaoke_window.volume.valueChanged.connect(self._sync_karaoke_volume)
+        return self._karaoke_window
+
+    def _toggle_karaoke(self) -> None:
+        self._get_karaoke_window().play()
+
+    def _set_karaoke_volume(self, value: int) -> None:
+        self._karaoke_fade_timer.stop()
+        if self._karaoke_window is not None:
+            self._karaoke_window.volume.setValue(value)
+
+    def _sync_karaoke_volume(self, value: int) -> None:
+        if not self._karaoke_fade_updating:
+            self._karaoke_fade_timer.stop()
+        if self.karaoke_volume.value() != value:
+            self.karaoke_volume.blockSignals(True)
+            self.karaoke_volume.setValue(value)
+            self.karaoke_volume.blockSignals(False)
+
+    def _start_karaoke_fade(self, target: int) -> None:
+        karaoke = self._get_karaoke_window()
+        if target > 0 and not karaoke.engine.is_playing():
+            karaoke.play()
+        self._karaoke_fade_start = self.karaoke_volume.value()
+        self._karaoke_fade_target = target
+        self._karaoke_fade_started = time.monotonic()
+        self._karaoke_fade_timer.start()
+
+    def _karaoke_fade_tick(self) -> None:
+        duration = max(0.25, float(self.karaoke_fade_seconds.value()))
+        progress = min(1.0, (time.monotonic() - self._karaoke_fade_started) / duration)
+        eased = progress * progress * (3.0 - 2.0 * progress)
+        value = round(
+            self._karaoke_fade_start
+            + (self._karaoke_fade_target - self._karaoke_fade_start) * eased
+        )
+        # Temporarily block the user-change handler so the animation does not
+        # cancel its own timer; the karaoke slider keeps both UIs synchronized.
+        self.karaoke_volume.blockSignals(True)
+        self.karaoke_volume.setValue(value)
+        self.karaoke_volume.blockSignals(False)
+        self._karaoke_fade_updating = True
+        self._get_karaoke_window().volume.setValue(value)
+        self._karaoke_fade_updating = False
+        if progress >= 1.0:
+            self._karaoke_fade_timer.stop()
 
     def _add_search_track(self, side: str, track: Track) -> None:
         deck = self.left if side == "left" else self.right
