@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -126,6 +128,7 @@ class MainWindow(QMainWindow):
 
         self.karaoke_play_button = QPushButton("PLAY / PAUSE")
         self.karaoke_play_button.setObjectName("HotButton")
+        self.karaoke_play_button.setProperty("compactControl", True)
         karaoke_remote_layout.addWidget(self.karaoke_play_button)
 
         karaoke_volume_row = QHBoxLayout()
@@ -141,15 +144,31 @@ class MainWindow(QMainWindow):
         karaoke_fade_row = QHBoxLayout()
         self.karaoke_fade_out_button = QPushButton("FADE OUT")
         self.karaoke_fade_in_button = QPushButton("FADE IN")
+        self.karaoke_fade_out_button.setProperty("compactControl", True)
+        self.karaoke_fade_in_button.setProperty("compactControl", True)
         self.karaoke_fade_seconds = QSpinBox()
         self.karaoke_fade_seconds.setRange(1, 10)
         self.karaoke_fade_seconds.setValue(3)
         self.karaoke_fade_seconds.setSuffix(" s")
         self.karaoke_fade_seconds.setToolTip("Karaoke fade duration")
-        karaoke_fade_row.addWidget(self.karaoke_fade_out_button)
-        karaoke_fade_row.addWidget(self.karaoke_fade_in_button)
-        karaoke_fade_row.addWidget(self.karaoke_fade_seconds)
+        self.karaoke_fade_seconds.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        karaoke_fade_row.addWidget(self.karaoke_fade_out_button, 1)
+        karaoke_fade_row.addWidget(self.karaoke_fade_in_button, 1)
         karaoke_remote_layout.addLayout(karaoke_fade_row)
+
+        karaoke_duration_label = QLabel("FADE DURATION")
+        karaoke_duration_label.setObjectName("Subtle")
+        karaoke_remote_layout.addWidget(karaoke_duration_label)
+        karaoke_remote_layout.addWidget(self.karaoke_fade_seconds)
+
+        karaoke_playlist_label = QLabel("KARAOKE PLAYLIST")
+        karaoke_playlist_label.setObjectName("Subtle")
+        karaoke_remote_layout.addWidget(karaoke_playlist_label)
+        self.karaoke_playlist = QListWidget()
+        self.karaoke_playlist.setMinimumHeight(75)
+        self.karaoke_playlist.setMaximumHeight(120)
+        self.karaoke_playlist.setToolTip("Double-click a track to play it in Karaoke")
+        karaoke_remote_layout.addWidget(self.karaoke_playlist)
         center_layout.addWidget(karaoke_remote)
         center_layout.addStretch(1)
 
@@ -204,6 +223,7 @@ class MainWindow(QMainWindow):
         self.karaoke_volume.valueChanged.connect(self._set_karaoke_volume)
         self.karaoke_fade_out_button.clicked.connect(lambda: self._start_karaoke_fade(0))
         self.karaoke_fade_in_button.clicked.connect(lambda: self._start_karaoke_fade(100))
+        self.karaoke_playlist.itemDoubleClicked.connect(self._play_karaoke_queue_item)
 
         self._automation_timer = QTimer(self)
         self._automation_timer.setInterval(200)
@@ -245,7 +265,26 @@ class MainWindow(QMainWindow):
             self._karaoke_window = KaraokeWindow(self)
             self._karaoke_window.volume.setValue(self.karaoke_volume.value())
             self._karaoke_window.volume.valueChanged.connect(self._sync_karaoke_volume)
+            self._karaoke_window.queueChanged.connect(self._sync_karaoke_playlist)
+            self._sync_karaoke_playlist()
         return self._karaoke_window
+
+    def _sync_karaoke_playlist(self) -> None:
+        karaoke = self._karaoke_window
+        if karaoke is None:
+            self.karaoke_playlist.clear()
+            return
+        self.karaoke_playlist.clear()
+        for row in range(karaoke.playlist.count()):
+            source_item = karaoke.playlist.item(row)
+            if source_item is not None:
+                self.karaoke_playlist.addItem(source_item.clone())
+        if 0 <= karaoke.current_index < self.karaoke_playlist.count():
+            self.karaoke_playlist.setCurrentRow(karaoke.current_index)
+
+    def _play_karaoke_queue_item(self, item: QListWidgetItem) -> None:
+        index = self.karaoke_playlist.row(item)
+        self._get_karaoke_window().play_index(index)
 
     def _toggle_karaoke(self) -> None:
         self._get_karaoke_window().play()

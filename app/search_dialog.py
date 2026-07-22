@@ -107,11 +107,15 @@ class ResultCard(QFrame):
 
 class SearchDialog(QDialog):
     trackAdded = Signal(str, object)
+    _MINIMUM_WIDTH = 760
+    _MAXIMUM_WIDTH = 900
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("YouTube / YouTube Music Search")
-        self.resize(1050, 760)
+        self.setMinimumWidth(self._MINIMUM_WIDTH)
+        self.setMaximumWidth(self._MAXIMUM_WIDTH)
+        self.resize(860, 760)
         self._pool = QThreadPool.globalInstance()
         self._network = QNetworkAccessManager(self)
         self._reply_targets: dict[QNetworkReply, QLabel] = {}

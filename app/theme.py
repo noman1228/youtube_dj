@@ -42,6 +42,7 @@ QPushButton#PrimaryButton { background: #006f84; border-color: #00d8ff; }
 QPushButton#HotButton { background: #7b1552; border-color: #ff2fa7; }
 QPushButton#PlayButton { font-size: 13pt; min-width: 58px; min-height: 36px; }
 QPushButton#MixerButton { font-size: 8pt; padding: 6px 3px; }
+QPushButton[compactControl="true"] { font-size: 8pt; padding: 5px 3px; }
 QLineEdit, QComboBox, QSpinBox {
     background: #0c111a;
     border: 1px solid #34445f;

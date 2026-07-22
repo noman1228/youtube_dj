@@ -146,6 +146,8 @@ class ProjectorWindow(QMainWindow):
 
 
 class KaraokeWindow(QDialog):
+    queueChanged = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("EncoreMix - KARAOKE DECK")
@@ -465,6 +467,8 @@ class KaraokeWindow(QDialog):
         self.playlist.addItem(self._make_item(len(self.tracks) - 1, karaoke_track))
         if self.current_index < 0:
             self._load_index(0)
+        else:
+            self.queueChanged.emit()
 
     def _load_index(self, index: int, autoplay: bool = False) -> None:
         if not (0 <= index < len(self.tracks)) or self.tracks[index].played:
@@ -476,6 +480,14 @@ class KaraokeWindow(QDialog):
         self._update_projector_artist()
         self.engine.load(track, autoplay=autoplay)
         self._refresh_items()
+        self.queueChanged.emit()
+
+    def play_index(self, index: int) -> None:
+        """Load and play an exact queue entry, including a previously played one."""
+        if not (0 <= index < len(self.tracks)):
+            return
+        self.tracks[index].played = False
+        self._load_index(index, autoplay=True)
 
     def play(self) -> None:
         if self.current_index < 0 or self.tracks[self.current_index].played:
@@ -504,17 +516,18 @@ class KaraokeWindow(QDialog):
             self.current_index = -1
             self.now_playing.setText("Nothing loaded")
             self._update_projector_artist()
+            self.queueChanged.emit()
 
     def _double_clicked(self, item: QListWidgetItem) -> None:
         index = self.playlist.row(item)
-        if 0 <= index < len(self.tracks) and not self.tracks[index].played:
-            self._load_index(index, autoplay=True)
+        self.play_index(index)
 
     def _reenable_selected(self) -> None:
         index = self.playlist.currentRow()
         if 0 <= index < len(self.tracks) and self.tracks[index].played:
             self.tracks[index].played = False
             self._refresh_items()
+            self.queueChanged.emit()
 
     def _remove_selected(self) -> None:
         index = self.playlist.currentRow()
@@ -536,6 +549,7 @@ class KaraokeWindow(QDialog):
         elif index < self.current_index:
             self.current_index -= 1
         self._refresh_items()
+        self.queueChanged.emit()
 
     def _make_item(self, index: int, track: Track) -> QListWidgetItem:
         item = QListWidgetItem()
