@@ -7,8 +7,10 @@ A working first-phase desktop DJ application with:
 - Separate YouTube / YouTube Music search window
 - Search result thumbnails, metadata, descriptions, and direct **Add Left / Add Right** actions
 - Equal-power crossfader
+- Live decoded-audio waveforms on both decks with playheads and click/drag seeking
 - Automatic transition when the dominant deck reaches 10 seconds remaining
-- Configurable 2–10 second fade time
+- Optional beat-matched Auto Mix with silent incoming-deck analysis, harmonic tempo normalization, phase alignment, fades driven by 1–8 complete bars, and a single original-BPM reset at the final beat
+- Configurable 2–10 second fade time for timed mode and beat-analysis fallback
 - Automatic advancement of the ended deck to its next playlist track
 - Local audio-file support
 - Persistent playlists and mixer settings
@@ -48,10 +50,11 @@ python main.py
 3. Add results to the left or right playlist.
 4. Double-click a playlist item, or press Play.
 5. Move the crossfader manually, or leave **AUTO MIX** enabled.
-6. With Auto Mix enabled, the opposite deck starts and the crossfader moves when the dominant deck has 10 seconds remaining.
+6. With Auto Mix enabled, the opposite deck starts near the end of the dominant track; preparation begins earlier when Beat Match needs more bars.
 7. After a deck finishes, it loads the next item in its own playlist and waits for its next turn.
 8. Use **MAIN MIX REMOTE** in the karaoke window to choose a side, adjust its volume, pause/resume it, or move the main crossfader.
 9. Use **KARAOKE REMOTE** on the main mixer to pause/resume karaoke, set its volume, or fade it in/out over the selected duration.
+10. Leave **BEAT MATCH** enabled and choose **FADE BARS** for a beat-driven Auto Mix. Disable it to expose **FADE SECONDS** and use only the original timed crossfade.
 
 ## Important implementation notes
 

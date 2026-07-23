@@ -47,6 +47,7 @@ class ResultCard(QFrame):
         self.track = track
         self.setObjectName("ResultCard")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(155)
 
         row = QHBoxLayout(self)
         row.setContentsMargins(12, 12, 12, 12)
@@ -56,12 +57,19 @@ class ResultCard(QFrame):
         self.thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumbnail.setFixedSize(160, 90)
         self.thumbnail.setStyleSheet("background:#080b10;border:1px solid #34445f;border-radius:8px;color:#66758c;")
-        row.addWidget(self.thumbnail)
+        row.addWidget(self.thumbnail, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        text_col = QVBoxLayout()
+        text_panel = QWidget()
+        text_panel.setObjectName("ResultTextPanel")
+        text_panel.setFixedWidth(360)
+        text_panel.setStyleSheet("background: transparent;")
+        text_col = QVBoxLayout(text_panel)
+        text_col.setContentsMargins(0, 0, 0, 0)
         title = QLabel(track.title)
         title.setObjectName("TrackTitle")
         title.setWordWrap(True)
+        title.setMaximumHeight(44)
+        title.setToolTip(track.title)
         text_col.addWidget(title)
 
         meta = " • ".join(part for part in [track.source, track.uploader, track.duration_text] if part)
@@ -71,12 +79,14 @@ class ResultCard(QFrame):
 
         description = QLabel(track.description or "No description supplied.")
         description.setWordWrap(True)
-        description.setMaximumHeight(52)
+        description.setMaximumHeight(38)
         description.setToolTip(track.description)
         text_col.addWidget(description)
-        row.addLayout(text_col, 1)
+        row.addWidget(text_panel, 0, Qt.AlignmentFlag.AlignVCenter)
 
         buttons = QVBoxLayout()
+        buttons.setSpacing(7)
+        buttons.addStretch(1)
         targets = targets or [
             ("left", "ADD LEFT", "PrimaryButton"),
             ("right", "ADD RIGHT", "HotButton"),
@@ -84,15 +94,18 @@ class ResultCard(QFrame):
         for target, label, object_name in targets:
             add = QPushButton(label)
             add.setObjectName(object_name)
+            add.setFixedWidth(112)
             add.clicked.connect(
                 lambda _checked=False, target=target: self.addRequested.emit(target, self.track)
             )
             buttons.addWidget(add)
         details = QPushButton("DETAILS")
+        details.setFixedWidth(112)
         details.clicked.connect(self._show_details)
         buttons.addWidget(details)
         buttons.addStretch(1)
         row.addLayout(buttons)
+        row.addStretch(1)
 
     def _show_details(self) -> None:
         QMessageBox.information(
@@ -195,6 +208,7 @@ class SearchDialog(QDialog):
             self._pool.start(task)
 
     def _clear_results(self) -> None:
+        self.scroll.verticalScrollBar().setValue(0)
         for reply in tuple(self._reply_targets):
             reply.abort()
         self._reply_targets.clear()

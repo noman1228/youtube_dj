@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import math
 import traceback
 from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, QUrl, Signal, Slot
-from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer, QVideoSink
+from PySide6.QtMultimedia import (
+    QAudioBuffer,
+    QAudioBufferOutput,
+    QAudioFormat,
+    QAudioOutput,
+    QMediaMetaData,
+    QMediaPlayer,
+    QVideoSink,
+)
 
+from .beat import BeatInfo, BeatTracker
 from .models import Track
 
 
@@ -144,6 +154,36 @@ def _safe_metadata_value(metadata: QMediaMetaData, key: QMediaMetaData.Key) -> o
         return None
 
 
+def _audio_buffer_level(buffer: QAudioBuffer) -> float | None:
+    """Return an amplified RMS level without retaining the decoder's buffer."""
+    if not buffer.isValid() or buffer.sampleCount() <= 0:
+        return None
+    raw = memoryview(buffer.constData())
+    sample_format = buffer.format().sampleFormat()
+    try:
+        if sample_format == QAudioFormat.SampleFormat.UInt8:
+            values = raw.cast("B")
+            normalize = lambda value: (float(value) - 128.0) / 128.0
+        elif sample_format == QAudioFormat.SampleFormat.Int16:
+            values = raw.cast("h")
+            normalize = lambda value: float(value) / 32768.0
+        elif sample_format == QAudioFormat.SampleFormat.Int32:
+            values = raw.cast("i")
+            normalize = lambda value: float(value) / 2147483648.0
+        elif sample_format == QAudioFormat.SampleFormat.Float:
+            values = raw.cast("f")
+            normalize = float
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    step = max(1, len(values) // 2048)
+    squares = [normalize(values[index]) ** 2 for index in range(0, len(values), step)]
+    if not squares:
+        return None
+    return max(0.0, min(1.0, math.sqrt(sum(squares) / len(squares)) * 2.4))
+
+
 class QtMediaDeckEngine(QObject):
     _MAX_STREAM_RETRIES = 3
 
@@ -153,8 +193,14 @@ class QtMediaDeckEngine(QObject):
     playbackStarted = Signal()
     ended = Signal()
     error = Signal(str)
+    waveformSample = Signal(int, float)
 
-    def __init__(self, parent: QObject | None = None, video: bool = False) -> None:
+    def __init__(
+        self,
+        parent: QObject | None = None,
+        video: bool = False,
+        capture_waveform: bool = False,
+    ) -> None:
         super().__init__(parent)
         self._pool = QThreadPool.globalInstance()
         self._resolve_tasks: dict[int, ResolveTask] = {}
@@ -174,10 +220,26 @@ class QtMediaDeckEngine(QObject):
         self._failure_reported = False
         self._resolving = False
         self._user_stopped = True
+        self._analysis_muted = False
+        self._beat_tracker = BeatTracker()
 
         self._player = QMediaPlayer(self)
         self._audio_output = QAudioOutput(self)
         self._player.setAudioOutput(self._audio_output)
+        self._audio_buffer_output: QAudioBufferOutput | None = None
+        if capture_waveform:
+            self._audio_buffer_output = QAudioBufferOutput(self)
+            self._audio_buffer_output.audioBufferReceived.connect(self._audio_buffer_received)
+            self._player.setAudioBufferOutput(self._audio_buffer_output)
+            # Pitch compensation arrived in Qt 6.10; requirements still allow
+            # Qt 6.8/6.9, where beat matching must remain startup-safe.
+            try:
+                availability = self._player.pitchCompensationAvailability()
+                unavailable = QMediaPlayer.PitchCompensationAvailability.Unavailable
+                if availability != unavailable:
+                    self._player.setPitchCompensation(True)
+            except (AttributeError, RuntimeError):
+                pass
         self._player.positionChanged.connect(self._position_changed)
         self._player.durationChanged.connect(self._duration_changed)
         self._player.playbackStateChanged.connect(self._playback_state_changed)
@@ -212,6 +274,8 @@ class QtMediaDeckEngine(QObject):
 
     def load(self, track: Track, autoplay: bool = False) -> None:
         self.stop()
+        self._player.setPlaybackRate(1.0)
+        self._beat_tracker.reset()
         self._retry_attempt = 0
         self._retry_pending = False
         self._retry_position_ms = 0
@@ -312,9 +376,28 @@ class QtMediaDeckEngine(QObject):
         self._crossfade_factor = max(0.0, min(1.0, factor))
         self._apply_volume()
 
+    def set_analysis_muted(self, muted: bool) -> None:
+        self._analysis_muted = muted
+        self._apply_volume()
+
+    def set_playback_rate(self, rate: float) -> None:
+        self._player.setPlaybackRate(max(0.5, min(2.0, rate)))
+
+    def playback_rate(self) -> float:
+        return self._player.playbackRate()
+
+    def beat_info(self) -> BeatInfo | None:
+        return self._beat_tracker.info()
+
+    def seek_ms(self, position_ms: int) -> None:
+        if self._ready:
+            self._player.setPosition(max(0, min(position_ms, self._player.duration())))
+
     def _apply_volume(self) -> None:
         # QAudioOutput accepts continuous volume, avoiding integer steps.
         volume = self._gain / 100.0 * self._crossfade_factor
+        if self._analysis_muted:
+            volume = 0.0
         self._audio_output.setVolume(max(0.0, min(1.0, volume)))
 
     def current_times(self) -> tuple[int, int]:
@@ -327,6 +410,16 @@ class QtMediaDeckEngine(QObject):
     @Slot(int)
     def _duration_changed(self, _duration: int) -> None:
         self.positionChanged.emit(*self.current_times())
+
+    @Slot(QAudioBuffer)
+    def _audio_buffer_received(self, buffer: QAudioBuffer) -> None:
+        level = _audio_buffer_level(buffer)
+        if level is None:
+            return
+        start_time = buffer.startTime()
+        time_ms = round(start_time / 1000) if start_time >= 0 else self._player.position()
+        self._beat_tracker.add_level(time_ms, level)
+        self.waveformSample.emit(time_ms, level)
 
     @Slot(QMediaPlayer.PlaybackState)
     def _playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:

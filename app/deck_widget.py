@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from .media import QtMediaDeckEngine
 from .models import Track
+from .waveform_widget import WaveformWidget
 
 
 class DeckWidget(QFrame):
@@ -41,7 +42,7 @@ class DeckWidget(QFrame):
         self._art_reply: QNetworkReply | None = None
 
         self.setObjectName("LeftDeck" if side == "left" else "RightDeck")
-        self.engine = QtMediaDeckEngine(self)
+        self.engine = QtMediaDeckEngine(self, capture_waveform=True)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(15, 15, 15, 15)
@@ -54,8 +55,12 @@ class DeckWidget(QFrame):
         self.state_label.setObjectName("Subtle")
         self.state_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.state_label.setMinimumWidth(150)
+        self.bpm_label = QLabel("BPM --")
+        self.bpm_label.setObjectName("Subtle")
+        self.bpm_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         header.addWidget(badge)
         header.addStretch(1)
+        header.addWidget(self.bpm_label)
         header.addWidget(self.state_label)
         root.addLayout(header)
 
@@ -102,6 +107,9 @@ class DeckWidget(QFrame):
         time_row.addWidget(self.remaining)
         root.addLayout(time_row)
 
+        self.waveform = WaveformWidget(side)
+        root.addWidget(self.waveform)
+
         self.progress = QSlider(Qt.Orientation.Horizontal)
         self.progress.setRange(0, 1000)
         root.addWidget(self.progress)
@@ -140,6 +148,8 @@ class DeckWidget(QFrame):
 
         self.engine.stateChanged.connect(self._state_changed)
         self.engine.positionChanged.connect(self._position_changed)
+        self.engine.waveformSample.connect(self.waveform.add_sample)
+        self.engine.waveformSample.connect(self._update_bpm)
         self.engine.loaded.connect(self._loaded)
         self.engine.ended.connect(self._ended)
         self.engine.error.connect(self._show_error)
@@ -156,6 +166,7 @@ class DeckWidget(QFrame):
         self.gain.valueChanged.connect(self.engine.set_gain)
         self.progress.sliderPressed.connect(lambda: setattr(self, "_seeking", True))
         self.progress.sliderReleased.connect(self._seek_released)
+        self.waveform.seekRequested.connect(self.engine.seek_fraction)
 
     def add_track(self, track: Track, load_if_empty: bool = True) -> None:
         self.tracks.append(track)
@@ -183,6 +194,8 @@ class DeckWidget(QFrame):
         self.current_index = index
         self.playlist.setCurrentRow(index)
         track = self.tracks[index]
+        self.waveform.reset(int(track.duration_seconds or 0) * 1000)
+        self.bpm_label.setText("BPM --")
         self.title_label.setText(track.title)
         self.meta_label.setText(" • ".join(part for part in [track.source, track.uploader, track.duration_text] if part))
         self._load_art(track.thumbnail_url)
@@ -234,6 +247,8 @@ class DeckWidget(QFrame):
             self.art.clear()
             self.art.setText("DROP\nA TRACK")
             self.state_label.setText("EMPTY")
+            self.waveform.reset()
+            self.bpm_label.setText("BPM --")
         elif was_current:
             self.engine.stop()
             self.current_index = -1
@@ -286,6 +301,18 @@ class DeckWidget(QFrame):
         self.remaining.setText(f"-{_format_ms(max(0, total_ms - current_ms))}")
         if total_ms > 0 and not self._seeking:
             self.progress.setValue(round(current_ms / total_ms * 1000))
+        self.waveform.set_position(current_ms, total_ms)
+
+    def _update_bpm(self, _time_ms: int, _level: float) -> None:
+        info = self.engine.beat_info()
+        if info is None or info.confidence < 0.45:
+            return
+        rate = self.engine.playback_rate()
+        self.bpm_label.setText(f"BPM {info.bpm * rate:.0f}")
+        self.bpm_label.setToolTip(
+            f"Detected {info.bpm:.1f} BPM · playback rate {rate:.3f}x · "
+            f"confidence {info.confidence:.0%}"
+        )
 
     def _seek_released(self) -> None:
         self._seeking = False

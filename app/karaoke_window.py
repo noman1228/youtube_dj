@@ -231,14 +231,27 @@ class KaraokeWindow(QDialog):
         layout.addWidget(self.main_crossfader, 1)
         layout.addWidget(QLabel("R"))
 
-        fade_time_label = QLabel("TIME")
-        fade_time_label.setObjectName("Subtle")
+        self.main_beat_match = QCheckBox("BEAT")
+        self.main_beat_match.setChecked(main_window.beat_match.isChecked())
+        self.main_beat_match.setToolTip("Use beat-based bars or timed seconds for Auto Mix")
+        layout.addWidget(self.main_beat_match)
+
+        self.main_fade_time_label = QLabel("TIME")
+        self.main_fade_time_label.setObjectName("Subtle")
         self.main_fade_seconds = QSpinBox()
         self.main_fade_seconds.setRange(2, 10)
         self.main_fade_seconds.setValue(main_window.fade_seconds.value())
         self.main_fade_seconds.setSuffix(" s")
-        layout.addWidget(fade_time_label)
+        layout.addWidget(self.main_fade_time_label)
         layout.addWidget(self.main_fade_seconds)
+
+        self.main_fade_bars_label = QLabel("BARS")
+        self.main_fade_bars_label.setObjectName("Subtle")
+        self.main_fade_bars = QSpinBox()
+        self.main_fade_bars.setRange(1, 8)
+        self.main_fade_bars.setValue(main_window.fade_bars.value())
+        layout.addWidget(self.main_fade_bars_label)
+        layout.addWidget(self.main_fade_bars)
 
         self.main_side.currentIndexChanged.connect(
             lambda _index: self._sync_selected_main_volume(main_window)
@@ -249,6 +262,13 @@ class KaraokeWindow(QDialog):
         main_window.crossfader.valueChanged.connect(self.main_crossfader.setValue)
         self.main_fade_seconds.valueChanged.connect(main_window.fade_seconds.setValue)
         main_window.fade_seconds.valueChanged.connect(self.main_fade_seconds.setValue)
+        self.main_fade_bars.valueChanged.connect(main_window.fade_bars.setValue)
+        main_window.fade_bars.valueChanged.connect(self.main_fade_bars.setValue)
+        self.main_beat_match.toggled.connect(main_window.beat_match.setChecked)
+        main_window.beat_match.toggled.connect(self.main_beat_match.setChecked)
+        self.main_beat_match.toggled.connect(
+            lambda _checked: self._sync_main_fade_mode(main_window)
+        )
         main_window.left.gain.valueChanged.connect(
             lambda value: self._main_gain_changed(main_window, "left", value)
         )
@@ -256,6 +276,7 @@ class KaraokeWindow(QDialog):
             lambda value: self._main_gain_changed(main_window, "right", value)
         )
         self._sync_selected_main_volume(main_window)
+        self._sync_main_fade_mode(main_window)
         return panel
 
     def _selected_main_deck(self, main_window: QWidget):
@@ -277,6 +298,13 @@ class KaraokeWindow(QDialog):
         selected_side = "left" if self.main_side.currentIndex() == 0 else "right"
         if side == selected_side and self.main_volume.value() != value:
             self.main_volume.setValue(value)
+
+    def _sync_main_fade_mode(self, main_window: QWidget) -> None:
+        beat_mode = main_window.beat_match.isChecked()
+        self.main_fade_bars_label.setVisible(beat_mode)
+        self.main_fade_bars.setVisible(beat_mode)
+        self.main_fade_time_label.setVisible(not beat_mode)
+        self.main_fade_seconds.setVisible(not beat_mode)
 
     def _build_search_panel(self) -> QWidget:
         panel = QFrame()

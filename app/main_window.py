@@ -23,6 +23,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .beat import (
+    BeatInfo,
+    bar_fade_seconds,
+    delay_to_next_beat_ms,
+    matched_playback_rate,
+    normalized_target_bpm,
+    phase_error_cycles,
+)
 from .deck_widget import DeckWidget
 from .karaoke_window import KaraokeWindow
 from .models import Track
@@ -46,6 +54,21 @@ class MainWindow(QMainWindow):
         self._transition_from = self._CROSSFADER_MAX // 2
         self._transition_to = self._CROSSFADER_MAX // 2
         self._transition_started = 0.0
+        self._transition_duration = 8.0
+        self._transition_beat_matched = False
+        self._transition_total_beats = 0
+        self._transition_source_side: str | None = None
+        self._transition_target_side: str | None = None
+        self._transition_source_start_ms = 0.0
+        self._transition_beat_interval_ms = 0.0
+        self._transition_last_reported_beat = -1
+        self._transition_target_grid_bpm = 0.0
+        self._transition_target_base_rate = 1.0
+        self._beat_analysis_target: str | None = None
+        self._beat_analysis_started = 0.0
+        self._beat_analysis_requested = 0.0
+        self._beat_launch_in_progress = False
+        self._beat_phase_settling = False
         self._last_triggered_side: str | None = None
         self._karaoke_fade_start = 100
         self._karaoke_fade_target = 100
@@ -99,16 +122,36 @@ class MainWindow(QMainWindow):
 
         self.auto_mix = QCheckBox("AUTO MIX")
         self.auto_mix.setChecked(True)
-        self.auto_mix.setToolTip("Start the opposite deck when the dominant deck has 10 seconds remaining.")
+        self.auto_mix.setToolTip(
+            "Start the opposite deck near the end of the track; Beat Match prepares it earlier."
+        )
         center_layout.addWidget(self.auto_mix)
 
-        fade_label = QLabel("FADE SECONDS")
-        fade_label.setObjectName("Subtle")
+        self.beat_match = QCheckBox("BEAT MATCH")
+        self.beat_match.setChecked(True)
+        self.beat_match.setToolTip(
+            "Silently analyze and align the incoming deck; fall back to a timed mix when needed."
+        )
+        center_layout.addWidget(self.beat_match)
+
+        self.fade_label = QLabel("FADE SECONDS")
+        self.fade_label.setObjectName("Subtle")
         self.fade_seconds = QSpinBox()
         self.fade_seconds.setRange(2, 10)
         self.fade_seconds.setValue(8)
-        center_layout.addWidget(fade_label)
+        self.fade_seconds.setToolTip("Fade duration for timed mode and beat-analysis fallback.")
+        center_layout.addWidget(self.fade_label)
         center_layout.addWidget(self.fade_seconds)
+
+        self.fade_bars_label = QLabel("FADE BARS")
+        self.fade_bars_label.setObjectName("Subtle")
+        self.fade_bars = QSpinBox()
+        self.fade_bars.setRange(1, 8)
+        self.fade_bars.setValue(4)
+        self.fade_bars.setSuffix(" bars")
+        self.fade_bars.setToolTip("Four beats per bar; Beat Match follows the outgoing deck.")
+        center_layout.addWidget(self.fade_bars_label)
+        center_layout.addWidget(self.fade_bars)
 
         self.status = QLabel("AUTOMIX ARMED")
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -224,6 +267,7 @@ class MainWindow(QMainWindow):
         self.karaoke_fade_out_button.clicked.connect(lambda: self._start_karaoke_fade(0))
         self.karaoke_fade_in_button.clicked.connect(lambda: self._start_karaoke_fade(100))
         self.karaoke_playlist.itemDoubleClicked.connect(self._play_karaoke_queue_item)
+        self.beat_match.toggled.connect(self._sync_fade_mode_controls)
 
         self._automation_timer = QTimer(self)
         self._automation_timer.setInterval(200)
@@ -235,12 +279,25 @@ class MainWindow(QMainWindow):
         self._fade_timer.setInterval(20)
         self._fade_timer.timeout.connect(self._fade_tick)
 
+        self._beat_launch_timer = QTimer(self)
+        self._beat_launch_timer.setSingleShot(True)
+        self._beat_launch_timer.timeout.connect(self._launch_pending_transition)
+
+        self._beat_settle_timer = QTimer(self)
+        self._beat_settle_timer.setSingleShot(True)
+        self._beat_settle_timer.timeout.connect(self._settle_beat_transition)
+
+        self._beat_mix_start_timer = QTimer(self)
+        self._beat_mix_start_timer.setSingleShot(True)
+        self._beat_mix_start_timer.timeout.connect(self._start_aligned_transition)
+
         self._karaoke_fade_timer = QTimer(self)
         self._karaoke_fade_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._karaoke_fade_timer.setInterval(20)
         self._karaoke_fade_timer.timeout.connect(self._karaoke_fade_tick)
 
         self._apply_crossfader(self._CROSSFADER_MAX // 2)
+        self._sync_fade_mode_controls()
         QTimer.singleShot(0, self._load_playlists)
 
     def open_search(self, preferred_side: str | None) -> None:
@@ -363,8 +420,22 @@ class MainWindow(QMainWindow):
     def _manual_fade_finished(self) -> None:
         self._manual_crossfade = False
 
+    def _sync_fade_mode_controls(self, _checked: bool | None = None) -> None:
+        beat_mode = self.beat_match.isChecked()
+        self.fade_bars_label.setVisible(beat_mode)
+        self.fade_bars.setVisible(beat_mode)
+        self.fade_label.setVisible(not beat_mode)
+        self.fade_seconds.setVisible(not beat_mode)
+
     def _automation_tick(self) -> None:
-        if not self.auto_mix.isChecked() or self._transition_active or self._pending_transition or self._manual_crossfade:
+        if not self.auto_mix.isChecked():
+            if self._pending_transition:
+                self._cancel_transition("AUTOMIX DISARMED")
+            return
+        if self._beat_analysis_target is not None:
+            self._beat_analysis_tick()
+            return
+        if self._transition_active or self._pending_transition or self._manual_crossfade:
             return
         value = self.crossfader.value()
         candidates = []
@@ -373,7 +444,16 @@ class MainWindow(QMainWindow):
         if self.right.engine.is_playing() and value >= self._CROSSFADER_MAX * 0.45:
             candidates.append(("right", self.right.current_remaining_ms()))
         for side, remaining in candidates:
-            if 0 < remaining <= 10_000 and self._last_triggered_side != side:
+            trigger_ms = 10_000
+            if self.beat_match.isChecked():
+                source = self.left if side == "left" else self.right
+                info = source.engine.beat_info()
+                effective_bpm = (
+                    info.bpm * source.engine.playback_rate() if info is not None else 120.0
+                )
+                beat_fade = bar_fade_seconds(self.fade_bars.value(), effective_bpm)
+                trigger_ms = max(trigger_ms, round((beat_fade + 7.0) * 1000))
+            if 0 < remaining <= trigger_ms and self._last_triggered_side != side:
                 self._request_automix(side)
                 break
 
@@ -385,6 +465,15 @@ class MainWindow(QMainWindow):
             return
         self._last_triggered_side = from_side
         self._pending_transition = (from_side, to_side)
+        if self.beat_match.isChecked() and not target.engine.is_playing():
+            self._beat_analysis_target = to_side
+            self._beat_analysis_started = 0.0
+            self._beat_analysis_requested = time.monotonic()
+            target.engine.set_playback_rate(1.0)
+            target.engine.set_analysis_muted(True)
+            self.status.setText(f"ANALYZING {to_side.upper()} BEATS...")
+            target.play()
+            return
         self.status.setText(f"PREPARING {to_side.upper()} DECK…")
         if target.engine.is_playing():
             self._begin_transition(from_side, to_side)
@@ -392,23 +481,264 @@ class MainWindow(QMainWindow):
             target.play()
 
     def _deck_started(self, side: str) -> None:
+        if self._beat_launch_in_progress:
+            return
+        if (
+            self._beat_phase_settling
+            and self._pending_transition
+            and self._pending_transition[1] == side
+        ):
+            return
+        if self._beat_analysis_target == side:
+            if self._beat_analysis_started <= 0:
+                self._beat_analysis_started = time.monotonic()
+            return
         if self._pending_transition and self._pending_transition[1] == side:
             from_side, to_side = self._pending_transition
             self._begin_transition(from_side, to_side)
 
-    def _begin_transition(self, from_side: str, to_side: str) -> None:
+    def _beat_analysis_tick(self) -> None:
+        if not self._pending_transition:
+            return
+        if self._beat_analysis_started <= 0:
+            if time.monotonic() - self._beat_analysis_requested >= 12.0:
+                self._cancel_transition("INCOMING DECK COULD NOT START")
+            return
+        from_side, to_side = self._pending_transition
+        source = self.left if from_side == "left" else self.right
+        target = self.left if to_side == "left" else self.right
+        source_info = source.engine.beat_info()
+        target_info = target.engine.beat_info()
+        elapsed = time.monotonic() - self._beat_analysis_started
+        if elapsed >= 0.5 and not target.engine.is_playing():
+            self._cancel_transition("INCOMING BEAT ANALYSIS STOPPED")
+            return
+        confident = self._usable_beat_info(source_info) and self._usable_beat_info(target_info)
+        if not confident and elapsed < 5.0:
+            return
+
+        self._beat_analysis_target = None
+        self._beat_analysis_started = 0.0
+        self._beat_analysis_requested = 0.0
+        target.engine.pause()
+        if confident and source_info is not None and target_info is not None:
+            source_rate = source.engine.playback_rate()
+            effective_bpm = source_info.bpm * source_rate
+            target_grid_bpm = normalized_target_bpm(
+                effective_bpm, target_info.bpm
+            )
+            target_rate = matched_playback_rate(
+                source_info.bpm,
+                source_rate,
+                target_info.bpm,
+            )
+            target.engine.set_playback_rate(target_rate)
+            target.engine.seek_ms(target_info.phase_ms)
+            source_position, _duration = source.engine.current_times()
+            delay_ms = delay_to_next_beat_ms(
+                source_position,
+                source_info.phase_ms,
+                source_info.bpm,
+                source_rate,
+            )
+            self._transition_total_beats = self.fade_bars.value() * 4
+            self._transition_duration = bar_fade_seconds(
+                self.fade_bars.value(), effective_bpm
+            )
+            self._transition_target_grid_bpm = target_grid_bpm
+            self._transition_target_base_rate = target_rate
+            self._transition_beat_matched = True
+            self.status.setText(
+                f"TEMPO LOCK {effective_bpm:.1f} BPM\n"
+                f"INCOMING {target_info.bpm:.1f} x {target_rate:.3f}"
+            )
+            self._beat_launch_timer.start(delay_ms)
+            return
+
+        target.engine.set_playback_rate(1.0)
+        target.engine.seek_ms(0)
+        self._transition_duration = float(self.fade_seconds.value())
+        self._transition_beat_matched = False
+        self._transition_total_beats = 0
+        self._transition_target_grid_bpm = 0.0
+        self._transition_target_base_rate = 1.0
+        self.status.setText("BEAT NOT FOUND - TIMED MIX")
+        self._beat_launch_timer.start(0)
+
+    @staticmethod
+    def _usable_beat_info(info: BeatInfo | None) -> bool:
+        return bool(info and 70.0 <= info.bpm <= 180.0 and info.confidence >= 0.45)
+
+    def _launch_pending_transition(self) -> None:
+        if not self._pending_transition:
+            return
+        from_side, to_side = self._pending_transition
+        target = self.left if to_side == "left" else self.right
+        self._beat_phase_settling = self._transition_beat_matched
+        self._beat_launch_in_progress = True
+        try:
+            target.engine.play()
+        finally:
+            self._beat_launch_in_progress = False
+        if self._transition_beat_matched:
+            self.status.setText("TEMPO LOCKED - SETTLING PHASE")
+            self._beat_settle_timer.start(180)
+            return
+        target.engine.set_analysis_muted(False)
+        self._begin_transition(
+            from_side,
+            to_side,
+            duration=self._transition_duration,
+            beat_matched=self._transition_beat_matched,
+        )
+
+    def _settle_beat_transition(self) -> None:
+        if not self._pending_transition:
+            return
+        from_side, to_side = self._pending_transition
+        source = self.left if from_side == "left" else self.right
+        target = self.left if to_side == "left" else self.right
+        source_info = source.engine.beat_info()
+        target_info = target.engine.beat_info()
+        if source_info is None or target_info is None or self._transition_target_grid_bpm <= 0:
+            self._beat_phase_settling = False
+            self._transition_beat_matched = False
+            self._transition_total_beats = 0
+            target.engine.set_playback_rate(1.0)
+            target.engine.seek_ms(0)
+            target.engine.set_analysis_muted(False)
+            self.status.setText("PHASE LOCK LOST - TIMED MIX")
+            self._transition_duration = float(self.fade_seconds.value())
+            self._begin_transition(from_side, to_side, duration=self._transition_duration)
+            return
+
+        source_position, _source_duration = source.engine.current_times()
+        target_position, _target_duration = target.engine.current_times()
+        source_interval = 60_000.0 / source_info.bpm
+        target_interval = 60_000.0 / self._transition_target_grid_bpm
+        source_fraction = (
+            (source_position - source_info.phase_ms) / source_interval
+        ) % 1.0
+        target_phase = target_info.phase_ms % target_interval
+        target_cycle = round((target_position - target_phase) / target_interval)
+        aligned_target_position = (
+            target_phase + target_cycle * target_interval + source_fraction * target_interval
+        )
+        while aligned_target_position < 0:
+            aligned_target_position += target_interval
+        target.engine.seek_ms(round(aligned_target_position))
+
+        delay_ms = delay_to_next_beat_ms(
+            source_position,
+            source_info.phase_ms,
+            source_info.bpm,
+            source.engine.playback_rate(),
+        )
+        self.status.setText(f"PHASE LOCKED - START IN {delay_ms} ms")
+        self._beat_mix_start_timer.start(delay_ms)
+
+    def _start_aligned_transition(self) -> None:
+        if not self._pending_transition:
+            return
+        from_side, to_side = self._pending_transition
+        target = self.left if to_side == "left" else self.right
+        self._beat_phase_settling = False
+        target.engine.set_analysis_muted(False)
+        self._begin_transition(
+            from_side,
+            to_side,
+            duration=self._transition_duration,
+            beat_matched=True,
+        )
+
+    def _begin_transition(
+        self,
+        from_side: str,
+        to_side: str,
+        duration: float | None = None,
+        beat_matched: bool = False,
+    ) -> None:
         self._pending_transition = None
         self._transition_active = True
+        self._transition_duration = max(
+            0.5, duration if duration is not None else float(self.fade_seconds.value())
+        )
+        self._transition_beat_matched = beat_matched
+        self._transition_source_side = from_side if beat_matched else None
+        self._transition_target_side = to_side if beat_matched else None
+        self._transition_last_reported_beat = -1
+        if beat_matched:
+            source = self.left if from_side == "left" else self.right
+            source_info = source.engine.beat_info()
+            position_ms, _duration_ms = source.engine.current_times()
+            if source_info is not None and source_info.bpm > 0:
+                interval_ms = 60_000.0 / source_info.bpm
+                grid_number = round((position_ms - source_info.phase_ms) / interval_ms)
+                self._transition_source_start_ms = (
+                    source_info.phase_ms + grid_number * interval_ms
+                )
+                self._transition_beat_interval_ms = interval_ms
+            else:
+                self._transition_source_start_ms = float(position_ms)
+                self._transition_beat_interval_ms = 0.0
+        else:
+            self._transition_total_beats = 0
+            self._transition_source_start_ms = 0.0
+            self._transition_beat_interval_ms = 0.0
+            self._transition_target_grid_bpm = 0.0
+            self._transition_target_base_rate = 1.0
         self._transition_from = self.crossfader.value()
         self._transition_to = self._CROSSFADER_MAX if to_side == "right" else 0
         self._transition_started = time.monotonic()
-        self.status.setText(f"AUTOMIX {from_side.upper()} → {to_side.upper()}")
+        label = "BEAT MIX" if beat_matched else "AUTOMIX"
+        self.status.setText(f"{label} {from_side.upper()} → {to_side.upper()}")
         self._fade_timer.start()
 
     def _fade_tick(self) -> None:
-        duration = max(0.5, float(self.fade_seconds.value()))
-        progress = min(1.0, (time.monotonic() - self._transition_started) / duration)
+        duration = self._transition_duration
+        wall_progress = min(1.0, (time.monotonic() - self._transition_started) / duration)
+        progress = wall_progress
         eased = progress * progress * (3.0 - 2.0 * progress)
+        if (
+            self._transition_beat_matched
+            and self._transition_source_side is not None
+            and self._transition_total_beats > 0
+            and self._transition_beat_interval_ms > 0
+        ):
+            source = (
+                self.left if self._transition_source_side == "left" else self.right
+            )
+            position_ms, _duration_ms = source.engine.current_times()
+            beat_position = max(
+                0.0,
+                (position_ms - self._transition_source_start_ms)
+                / self._transition_beat_interval_ms,
+            )
+            if not source.engine.is_playing():
+                beat_position = max(
+                    beat_position, wall_progress * self._transition_total_beats
+                )
+            beat_position = min(float(self._transition_total_beats), beat_position)
+            completed_beats = min(
+                self._transition_total_beats, int(math.floor(beat_position))
+            )
+            beat_phase = beat_position - completed_beats
+            eased_phase = beat_phase * beat_phase * (3.0 - 2.0 * beat_phase)
+            eased = min(
+                1.0,
+                (completed_beats + eased_phase) / self._transition_total_beats,
+            )
+            progress = beat_position / self._transition_total_beats
+            reported_beat = min(self._transition_total_beats, completed_beats + 1)
+            if reported_beat != self._transition_last_reported_beat:
+                self._transition_last_reported_beat = reported_beat
+                phase_error = self._measure_phase_error()
+                self.status.setText(
+                    f"BEAT MIX {self._transition_source_side.upper()} -> "
+                    f"{self._transition_target_side.upper()}\n"
+                    f"BEAT {reported_beat}/{self._transition_total_beats} · "
+                    f"PHASE {phase_error:+.2f}"
+                )
         value = round(self._transition_from + (self._transition_to - self._transition_from) * eased)
         self.crossfader.setValue(value)
         if progress >= 1.0:
@@ -417,13 +747,52 @@ class MainWindow(QMainWindow):
             # earlier tick, so explicitly enforce full gain on the new deck.
             self._apply_crossfader(self._transition_to)
             self._transition_active = False
-            self.status.setText("AUTOMIX COMPLETE")
+            if self._transition_beat_matched and self._transition_target_side is not None:
+                self._restore_original_tempo(self._transition_target_side)
+            else:
+                self.status.setText("AUTOMIX COMPLETE")
+
+    def _restore_original_tempo(self, side: str) -> None:
+        """Restore native speed once, on the final mix beat.
+
+        QMediaPlayer can underrun when setPlaybackRate() is called repeatedly.
+        Tempo is therefore fixed for the entire audible mix and reset with one
+        backend call only after the outgoing deck is fully silent.
+        """
+        deck = self.left if side == "left" else self.right
+        deck.engine.set_playback_rate(1.0)
+        self.status.setText("BEAT MIX COMPLETE - ORIGINAL BPM")
+
+    def _measure_phase_error(self) -> float:
+        if (
+            self._transition_source_side is None
+            or self._transition_target_side is None
+            or self._transition_target_grid_bpm <= 0
+        ):
+            return 0.0
+        source = self.left if self._transition_source_side == "left" else self.right
+        target = self.left if self._transition_target_side == "left" else self.right
+        source_info = source.engine.beat_info()
+        target_info = target.engine.beat_info()
+        if source_info is None or target_info is None:
+            return 0.0
+        source_position, _source_duration = source.engine.current_times()
+        target_position, _target_duration = target.engine.current_times()
+        error = phase_error_cycles(
+            source_position,
+            source_info.phase_ms,
+            source_info.bpm,
+            target_position,
+            target_info.phase_ms,
+            self._transition_target_grid_bpm,
+        )
+        return error
 
     def _deck_ended(self, side: str) -> None:
         if self._last_triggered_side == side:
             self._last_triggered_side = None
         if self._pending_transition and self._pending_transition[0] == side:
-            self._pending_transition = None
+            self._cancel_transition("SOURCE ENDED DURING PREPARATION")
         deck = self.left if side == "left" else self.right
         if deck.has_tracks():
             self.status.setText(f"{side.upper()} ADVANCED TO NEXT TRACK")
@@ -432,7 +801,35 @@ class MainWindow(QMainWindow):
 
     def _cancel_transition(self, reason: str) -> None:
         self._fade_timer.stop()
+        self._beat_launch_timer.stop()
+        self._beat_settle_timer.stop()
+        self._beat_mix_start_timer.stop()
+        analysis_side = self._beat_analysis_target
+        pending = self._pending_transition
+        if analysis_side is not None:
+            analysis_deck = self.left if analysis_side == "left" else self.right
+            analysis_deck.engine.pause()
+            analysis_deck.engine.seek_ms(0)
+            analysis_deck.engine.set_analysis_muted(False)
+        elif pending is not None:
+            target_side = pending[1]
+            target = self.left if target_side == "left" else self.right
+            target.engine.set_analysis_muted(False)
+            if self._transition_beat_matched:
+                target.engine.pause()
+                target.engine.seek_ms(0)
+                target.engine.set_playback_rate(1.0)
+        self._beat_analysis_target = None
+        self._beat_analysis_started = 0.0
+        self._beat_analysis_requested = 0.0
+        self._beat_phase_settling = False
         self._transition_active = False
+        self._transition_beat_matched = False
+        self._transition_source_side = None
+        self._transition_target_side = None
+        self._transition_total_beats = 0
+        self._transition_target_grid_bpm = 0.0
+        self._transition_target_base_rate = 1.0
         self._pending_transition = None
         self.status.setText(reason)
 
@@ -449,6 +846,8 @@ class MainWindow(QMainWindow):
             # Keep the persisted value in the original 0-100 format.
             "crossfader": round(self.crossfader.value() / self._CROSSFADER_MAX * 100),
             "auto_mix": self.auto_mix.isChecked(),
+            "beat_match": self.beat_match.isChecked(),
+            "fade_bars": self.fade_bars.value(),
             "fade_seconds": self.fade_seconds.value(),
         }
         try:
@@ -467,6 +866,8 @@ class MainWindow(QMainWindow):
             saved_crossfader = max(0, min(100, int(data.get("crossfader", 50))))
             self.crossfader.setValue(round(saved_crossfader / 100 * self._CROSSFADER_MAX))
             self.auto_mix.setChecked(bool(data.get("auto_mix", True)))
+            self.beat_match.setChecked(bool(data.get("beat_match", True)))
+            self.fade_bars.setValue(int(data.get("fade_bars", 4)))
             self.fade_seconds.setValue(int(data.get("fade_seconds", 8)))
         except (TypeError, ValueError) as exc:
             QMessageBox.warning(self, "Playlist restore", f"The saved playlist file could not be restored: {exc}")
