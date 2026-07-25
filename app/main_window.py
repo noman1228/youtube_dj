@@ -174,6 +174,12 @@ class MainWindow(QMainWindow):
         self.karaoke_play_button.setProperty("compactControl", True)
         karaoke_remote_layout.addWidget(self.karaoke_play_button)
 
+        self.karaoke_projector_button = QPushButton("SHOW PROJECTOR")
+        self.karaoke_projector_button.setCheckable(True)
+        self.karaoke_projector_button.setProperty("compactControl", True)
+        self.karaoke_projector_button.setToolTip("Show or hide the karaoke projector window")
+        karaoke_remote_layout.addWidget(self.karaoke_projector_button)
+
         karaoke_volume_row = QHBoxLayout()
         karaoke_volume_label = QLabel("VOL")
         karaoke_volume_label.setObjectName("Subtle")
@@ -263,6 +269,7 @@ class MainWindow(QMainWindow):
         self.crossfader.sliderPressed.connect(self._manual_fade_started)
         self.crossfader.sliderReleased.connect(self._manual_fade_finished)
         self.karaoke_play_button.clicked.connect(self._toggle_karaoke)
+        self.karaoke_projector_button.toggled.connect(self._toggle_karaoke_projector)
         self.karaoke_volume.valueChanged.connect(self._set_karaoke_volume)
         self.karaoke_fade_out_button.clicked.connect(lambda: self._start_karaoke_fade(0))
         self.karaoke_fade_in_button.clicked.connect(lambda: self._start_karaoke_fade(100))
@@ -323,6 +330,9 @@ class MainWindow(QMainWindow):
             self._karaoke_window.volume.setValue(self.karaoke_volume.value())
             self._karaoke_window.volume.valueChanged.connect(self._sync_karaoke_volume)
             self._karaoke_window.queueChanged.connect(self._sync_karaoke_playlist)
+            self._karaoke_window.projectorVisibilityChanged.connect(
+                self._sync_karaoke_projector_button
+            )
             self._sync_karaoke_playlist()
         return self._karaoke_window
 
@@ -345,6 +355,20 @@ class MainWindow(QMainWindow):
 
     def _toggle_karaoke(self) -> None:
         self._get_karaoke_window().play()
+
+    def _toggle_karaoke_projector(self, visible: bool) -> None:
+        if visible:
+            self._get_karaoke_window().open_projector()
+        elif self._karaoke_window is not None:
+            self._karaoke_window.hide_projector()
+
+    def _sync_karaoke_projector_button(self, visible: bool) -> None:
+        self.karaoke_projector_button.blockSignals(True)
+        self.karaoke_projector_button.setChecked(visible)
+        self.karaoke_projector_button.setText(
+            "HIDE PROJECTOR" if visible else "SHOW PROJECTOR"
+        )
+        self.karaoke_projector_button.blockSignals(False)
 
     def _set_karaoke_volume(self, value: int) -> None:
         self._karaoke_fade_timer.stop()

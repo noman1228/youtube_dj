@@ -43,6 +43,20 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
+## Updating
+
+Close EncoreMix, then run the standalone updater from the project folder:
+
+```powershell
+.\.venv\Scripts\python.exe updater.py
+```
+
+The updater checks the canonical source repository, installs only fast-forward
+updates, and refreshes the packages in `requirements.txt`. It stops without
+changing anything when the checkout contains local changes. To check without
+installing, use `updater.py --check`; to leave installed packages alone, use
+`updater.py --skip-dependencies`.
+
 ## How to use
 
 1. Click **SEARCH MUSIC**.

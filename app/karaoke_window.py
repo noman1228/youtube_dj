@@ -147,6 +147,7 @@ class ProjectorWindow(QMainWindow):
 
 class KaraokeWindow(QDialog):
     queueChanged = Signal()
+    projectorVisibilityChanged = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -183,6 +184,7 @@ class KaraokeWindow(QDialog):
         root.addWidget(splitter, 1)
 
         self.projector = ProjectorWindow(self)
+        self.projector.closed.connect(self._projector_closed)
         self.video_router = MirroredVideoRouter([self.video, self.projector.video], self)
         self.engine.set_video_sink(self.video_router.sink)
         self.engine.stateChanged.connect(self._set_state)
@@ -611,6 +613,14 @@ class KaraokeWindow(QDialog):
         self.projector.show()
         self.projector.raise_()
         self.projector.activateWindow()
+        self.projectorVisibilityChanged.emit(True)
+
+    def hide_projector(self) -> None:
+        self.projector.hide()
+        self.projectorVisibilityChanged.emit(False)
+
+    def _projector_closed(self) -> None:
+        self.projectorVisibilityChanged.emit(False)
 
     def _update_projector_artist(self, _checked: bool | None = None) -> None:
         artist = ""
