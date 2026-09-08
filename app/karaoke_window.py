@@ -158,12 +158,16 @@ class ProjectorWindow(QMainWindow):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Window)
+        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        self._close_confirmation_open = False
         self.setWindowTitle("EncoreMix Karaoke Video - Move to projector, then press F11")
         self.resize(960, 540)
         self.video = ProjectorVideoWidget()
         self.video.setStyleSheet("background:#000;")
         self.setCentralWidget(self.video)
-        self.statusBar().showMessage("Move this window to the projector. F11/double-click: fullscreen · Esc: exit fullscreen")
+        self.statusBar().showMessage(
+            "F11/double-click: fullscreen · Esc: exit fullscreen · Close from the main Karaoke Remote"
+        )
         self.video.fullscreenRequested.connect(self.toggle_fullscreen)
 
     def toggle_fullscreen(self) -> None:
@@ -185,6 +189,23 @@ class ProjectorWindow(QMainWindow):
             super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._close_confirmation_open:
+            event.ignore()
+            return
+        if self.isVisible():
+            self._close_confirmation_open = True
+            try:
+                text, accepted = QInputDialog.getText(
+                    self.parentWidget() or self,
+                    "Close projector",
+                    "The projector is keeping the video or idle logo on screen.\n"
+                    "Type CLOSE to turn off the projector window:",
+                )
+            finally:
+                self._close_confirmation_open = False
+            if not accepted or text.strip() != "CLOSE":
+                event.ignore()
+                return
         self.closed.emit()
         super().closeEvent(event)
 
@@ -229,7 +250,9 @@ class KaraokeWindow(QDialog):
         splitter.setSizes([570, 800])
         root.addWidget(splitter, 1)
 
-        self.projector = ProjectorWindow(self)
+        # The output belongs to the main window so hiding the lab (including
+        # Escape) cannot hide the audience's video or idle logo.
+        self.projector = ProjectorWindow(parent)
         self.projector.closed.connect(self._projector_closed)
         self.video_router = MirroredVideoRouter([self.video, self.projector.video], self)
         self._pause_image_timer = QTimer(self)
@@ -674,15 +697,16 @@ class KaraokeWindow(QDialog):
 
     def open_projector(self) -> None:
         self._update_projector_artist()
-        self.projector.showNormal()
+        if self.projector.isMinimized():
+            self.projector.showNormal()
         self.projector.show()
         self.projector.raise_()
         self.projector.activateWindow()
         self.projectorVisibilityChanged.emit(True)
 
     def hide_projector(self) -> None:
-        self.projector.hide()
-        self.projectorVisibilityChanged.emit(False)
+        if not self.projector.close():
+            self.projectorVisibilityChanged.emit(self.projector.isVisible())
 
     def _projector_closed(self) -> None:
         self.projectorVisibilityChanged.emit(False)
@@ -731,11 +755,6 @@ class KaraokeWindow(QDialog):
                     )
                 )
         reply.deleteLater()
-
-    def closeEvent(self, event: QCloseEvent) -> None:
-        self.projector.close()
-        self.engine.stop()
-        super().closeEvent(event)
 
 
 def _format_ms(milliseconds: int) -> str:

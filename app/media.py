@@ -221,6 +221,14 @@ def _metadata_name(value: object) -> str:
 
 def _safe_metadata_value(metadata: QMediaMetaData, key: QMediaMetaData.Key) -> object | None:
     try:
+        if key in (
+            QMediaMetaData.Key.AudioCodec,
+            QMediaMetaData.Key.VideoCodec,
+            QMediaMetaData.Key.FileFormat,
+        ):
+            # Convert display-only enums inside Qt; value() can raise when
+            # PySide has not registered their Python converters.
+            return metadata.stringValue(key) or None
         return metadata.value(key)
     except (RuntimeError, TypeError, ValueError):
         return None

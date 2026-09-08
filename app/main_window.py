@@ -82,28 +82,6 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(14, 14, 14, 14)
         root.setSpacing(12)
 
-        top = QFrame()
-        top.setObjectName("TopBar")
-        top_row = QHBoxLayout(top)
-        title_col = QVBoxLayout()
-        title = QLabel("EncoreMix 2026")
-        title.setObjectName("AppTitle")
-        subtitle = QLabel("DUAL-DECK STREAM MIXER")
-        subtitle.setObjectName("Subtle")
-        title_col.addWidget(title)
-        title_col.addWidget(subtitle)
-        top_row.addLayout(title_col)
-        top_row.addStretch(1)
-        search = QPushButton("SEARCH MUSIC")
-        search.setObjectName("PrimaryButton")
-        karaoke = QPushButton("KARAOKE LAB")
-        karaoke.setObjectName("HotButton")
-        search.clicked.connect(lambda: self.open_search(None))
-        karaoke.clicked.connect(self.open_karaoke)
-        top_row.addWidget(search)
-        top_row.addWidget(karaoke)
-        root.addWidget(top)
-
         decks_row = QHBoxLayout()
         decks_row.setSpacing(12)
         self.left = DeckWidget("left")
@@ -160,15 +138,22 @@ class MainWindow(QMainWindow):
         self.status.setStyleSheet("padding:12px;background:#0c111a;border-radius:10px;font-weight:800;")
         center_layout.addWidget(self.status)
 
-        karaoke_remote = QFrame()
-        karaoke_remote.setObjectName("DeckFrame")
+        self.karaoke_remote = karaoke_remote = QFrame()
+        karaoke_remote.setObjectName("KaraokeRemote")
+        karaoke_remote.setProperty("playing", False)
+        karaoke_remote.setProperty("flashOn", False)
         karaoke_remote_layout = QVBoxLayout(karaoke_remote)
         karaoke_remote_layout.setContentsMargins(9, 9, 9, 9)
         karaoke_remote_layout.setSpacing(7)
-        karaoke_remote_title = QLabel("KARAOKE REMOTE")
+        self.karaoke_remote_title = karaoke_remote_title = QLabel("KARAOKE REMOTE")
+        karaoke_remote_title.setObjectName("KaraokeRemoteTitle")
         karaoke_remote_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        karaoke_remote_title.setStyleSheet("font-weight:800;letter-spacing:1px;")
         karaoke_remote_layout.addWidget(karaoke_remote_title)
+
+        self.karaoke_lab_button = QPushButton("KARAOKE LAB")
+        self.karaoke_lab_button.setProperty("compactControl", True)
+        self.karaoke_lab_button.setToolTip("Open Karaoke Lab")
+        karaoke_remote_layout.addWidget(self.karaoke_lab_button)
 
         self.karaoke_play_button = QPushButton("PLAY / PAUSE")
         self.karaoke_play_button.setObjectName("HotButton")
@@ -178,7 +163,7 @@ class MainWindow(QMainWindow):
         self.karaoke_projector_button = QPushButton("SHOW PROJECTOR")
         self.karaoke_projector_button.setCheckable(True)
         self.karaoke_projector_button.setProperty("compactControl", True)
-        self.karaoke_projector_button.setToolTip("Show or hide the karaoke projector window")
+        self.karaoke_projector_button.setToolTip("Open the projector; closing it requires typing CLOSE")
         karaoke_remote_layout.addWidget(self.karaoke_projector_button)
 
         karaoke_volume_row = QHBoxLayout()
@@ -269,6 +254,7 @@ class MainWindow(QMainWindow):
         self.crossfader.valueChanged.connect(self._apply_crossfader)
         self.crossfader.sliderPressed.connect(self._manual_fade_started)
         self.crossfader.sliderReleased.connect(self._manual_fade_finished)
+        self.karaoke_lab_button.clicked.connect(self.open_karaoke)
         self.karaoke_play_button.clicked.connect(self._toggle_karaoke)
         self.karaoke_projector_button.toggled.connect(self._toggle_karaoke_projector)
         self.karaoke_volume.valueChanged.connect(self._set_karaoke_volume)
@@ -304,6 +290,10 @@ class MainWindow(QMainWindow):
         self._karaoke_fade_timer.setInterval(20)
         self._karaoke_fade_timer.timeout.connect(self._karaoke_fade_tick)
 
+        self._karaoke_blink_timer = QTimer(self)
+        self._karaoke_blink_timer.setInterval(600)
+        self._karaoke_blink_timer.timeout.connect(self._blink_karaoke_remote)
+
         self._apply_crossfader(self._CROSSFADER_MAX // 2)
         self._sync_fade_mode_controls()
         QTimer.singleShot(0, self._load_playlists)
@@ -334,8 +324,35 @@ class MainWindow(QMainWindow):
             self._karaoke_window.projectorVisibilityChanged.connect(
                 self._sync_karaoke_projector_button
             )
+            self._karaoke_window.engine.stateChanged.connect(self._sync_karaoke_playback)
             self._sync_karaoke_playlist()
         return self._karaoke_window
+
+    def _sync_karaoke_playback(self, _state: str = "") -> None:
+        playing = bool(self._karaoke_window and self._karaoke_window.engine.is_playing())
+        if playing == self.karaoke_remote.property("playing"):
+            return
+        self.karaoke_remote.setProperty("playing", playing)
+        self.karaoke_remote.setProperty("flashOn", playing)
+        self.karaoke_remote_title.setText("KARAOKE PLAYING" if playing else "KARAOKE REMOTE")
+        if playing:
+            self._karaoke_blink_timer.start()
+        else:
+            self._karaoke_blink_timer.stop()
+        self._refresh_karaoke_highlight()
+
+    def _blink_karaoke_remote(self) -> None:
+        self._sync_karaoke_playback()
+        if not self.karaoke_remote.property("playing"):
+            return
+        self.karaoke_remote.setProperty("flashOn", not self.karaoke_remote.property("flashOn"))
+        self._refresh_karaoke_highlight()
+
+    def _refresh_karaoke_highlight(self) -> None:
+        for widget in (self.karaoke_remote, self.karaoke_remote_title):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.update()
 
     def _sync_karaoke_playlist(self) -> None:
         karaoke = self._karaoke_window
@@ -367,7 +384,7 @@ class MainWindow(QMainWindow):
         self.karaoke_projector_button.blockSignals(True)
         self.karaoke_projector_button.setChecked(visible)
         self.karaoke_projector_button.setText(
-            "HIDE PROJECTOR" if visible else "SHOW PROJECTOR"
+            "CLOSE PROJECTOR" if visible else "SHOW PROJECTOR"
         )
         self.karaoke_projector_button.blockSignals(False)
 
@@ -908,6 +925,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Playlist restore", f"The saved playlist file could not be restored: {exc}")
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._karaoke_window is not None:
+            projector = self._karaoke_window.projector
+            if projector.isVisible() and not projector.close():
+                event.ignore()
+                return
+            self._karaoke_window.engine.stop()
+            self._karaoke_window.close()
+        self._karaoke_blink_timer.stop()
         self._save_playlists()
         self.left.engine.stop()
         self.right.engine.stop()

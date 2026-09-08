@@ -13,6 +13,25 @@ QFrame#TopBar, QFrame#CenterConsole, QFrame#DeckFrame, QFrame#ResultCard {
 }
 QFrame#LeftDeck { border: 1px solid #00d8ff; }
 QFrame#RightDeck { border: 1px solid #ff2fa7; }
+QFrame#KaraokeRemote {
+    background: #111722;
+    border: 3px solid #263247;
+    border-radius: 14px;
+}
+QLabel#KaraokeRemoteTitle {
+    background: transparent;
+    font-weight: 900;
+}
+QFrame#KaraokeRemote[playing="true"] {
+    background: #493600;
+    border-color: #e6ac00;
+}
+QFrame#KaraokeRemote[playing="true"] QLabel#KaraokeRemoteTitle { color: #ffe768; }
+QFrame#KaraokeRemote[playing="true"][flashOn="true"] {
+    background: #ffcf33;
+    border-color: #fff3b0;
+}
+QFrame#KaraokeRemote[playing="true"][flashOn="true"] QLabel#KaraokeRemoteTitle { color: #171000; }
 QLabel#AppTitle {
     font-size: 22pt;
     font-weight: 800;

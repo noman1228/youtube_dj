@@ -6,11 +6,11 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QUrl
-from PySide6.QtMultimedia import QMediaPlayer
+from PySide6.QtCore import QSize, QUrl
+from PySide6.QtMultimedia import QMediaMetaData, QMediaPlayer
 from PySide6.QtWidgets import QApplication
 
-from app.media import QtMediaDeckEngine, _effective_duration_ms
+from app.media import QtMediaDeckEngine, _effective_duration_ms, _safe_metadata_value
 from app.hls import HlsVideoSource
 from app.models import Track
 
@@ -38,6 +38,57 @@ class MediaRecoveryTest(unittest.TestCase):
         self.engine.stop()
         if self.engine._playlist_server:
             self.engine._playlist_server.close()
+
+    def test_metadata_labels_do_not_require_enum_converters(self) -> None:
+        metadata = Mock(spec=QMediaMetaData)
+        labels = {
+            QMediaMetaData.Key.AudioCodec: "AAC",
+            QMediaMetaData.Key.FileFormat: "MPEG-4",
+        }
+
+        def value(key):
+            if key in labels:
+                raise RuntimeError("Can't find converter for 'QMediaFormat::AudioCodec'.")
+            return {
+                QMediaMetaData.Key.AudioBitRate: 192000,
+                QMediaMetaData.Key.Resolution: QSize(1920, 1080),
+            }.get(key)
+
+        metadata.value.side_effect = value
+        metadata.stringValue.side_effect = labels.get
+        self.engine._player.metaData.return_value = metadata
+        self.engine._video = True
+
+        self.engine._metadata_changed()
+
+        self.assertEqual(self.engine._video_height, 1080)
+        self.assertEqual(self.engine._stream_info, "1080P · 192 KBPS · AAC/MPEG-4")
+        self.assertEqual(
+            [call.args[0] for call in metadata.value.call_args_list],
+            [QMediaMetaData.Key.Resolution, QMediaMetaData.Key.AudioBitRate],
+        )
+
+    def test_missing_metadata_preserves_resolved_stream_info(self) -> None:
+        self.engine._player.metaData.return_value = QMediaMetaData()
+        self.engine._stream_info = "128 KBPS · OPUS/WEBM"
+
+        self.engine._metadata_changed()
+
+        self.assertEqual(self.engine._stream_info, "128 KBPS · OPUS/WEBM")
+
+    def test_codec_and_container_labels_use_qt_strings(self) -> None:
+        from PySide6.QtMultimedia import QMediaFormat
+
+        cases = (
+            (QMediaMetaData.Key.AudioCodec, QMediaFormat.AudioCodec.AAC, "AAC"),
+            (QMediaMetaData.Key.VideoCodec, QMediaFormat.VideoCodec.H264, "H264"),
+            (QMediaMetaData.Key.FileFormat, QMediaFormat.FileFormat.MPEG4, "MPEG-4"),
+        )
+        for key, codec, label in cases:
+            with self.subTest(key=key):
+                metadata = QMediaMetaData()
+                metadata.insert(key, codec)
+                self.assertEqual(_safe_metadata_value(metadata, key), label)
 
     def test_karaoke_failure_steps_down_without_resolving_again(self) -> None:
         from app.hls import select_hls_video
