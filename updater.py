@@ -77,7 +77,7 @@ def refresh_dependencies() -> None:
             check=True,
         )
         subprocess.run(
-            [str(python), "-m", "pip", "install", "--upgrade", "yt-dlp[default]"],
+            [str(python), "-m", "pip", "install", "--upgrade", "yt-dlp[default,deno]"],
             cwd=PROJECT_DIR,
             check=True,
         )

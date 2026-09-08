@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import traceback
-from typing import Any
+from typing import Any, Iterator
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, QUrl, Signal, Slot
 from PySide6.QtMultimedia import (
@@ -16,11 +16,12 @@ from PySide6.QtMultimedia import (
 )
 
 from .beat import BeatInfo, BeatTracker
+from .hls import HlsPlaylistServer, HlsVideoSource, select_hls_video
 from .models import Track
 
 
 class ResolveSignals(QObject):
-    resolved = Signal(int, object, str, int, str)
+    resolved = Signal(int, object, object, int, str)
     failed = Signal(int, str)
 
 
@@ -49,14 +50,11 @@ class ResolveTask(QRunnable):
 
             options: Any = {
                 "quiet": True,
-                "no_warnings": True,
+                "no_warnings": False,
                 "skip_download": True,
                 "noplaylist": True,
                 "format": (
-                    "best[height<=720][vcodec!=none][acodec!=none]/"
-                    "best[vcodec!=none][acodec!=none]/best"
-                    if self.video
-                    else "bestaudio/best"
+                    _video_format_selector if self.video else "bestaudio/best"
                 ),
                 "socket_timeout": 20,
                 # yt-dlp enables only Deno by default; support the Node.js
@@ -65,6 +63,13 @@ class ResolveTask(QRunnable):
             }
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(self.track.webpage_url, download=False)
+                hls_source = None
+                if info and info.get("format_id") == "hls-master":
+                    with ydl.urlopen(info["url"]) as response:
+                        manifest = response.read(1_048_577)
+                    if len(manifest) > 1_048_576:
+                        raise RuntimeError("The HLS playlist is too large to open safely.")
+                    hls_source = select_hls_video(manifest.decode("utf-8-sig"), info["url"])
             if not info:
                 raise RuntimeError("No playable stream information was returned.")
             stream_url = info.get("url") or _best_stream_url(
@@ -73,8 +78,11 @@ class ResolveTask(QRunnable):
             if not stream_url:
                 raise RuntimeError("No playable audio stream was found.")
             duration = int(info.get("duration") or self.track.duration_seconds or 0)
-            stream_info = _stream_description(dict(info), stream_url)
-            self._emit_resolved(self.generation, self.track, stream_url, duration, stream_info)
+            stream_info = (
+                f"{hls_source.height}P VIDEO + AUDIO" if hls_source
+                else _stream_description(dict(info), stream_url)
+            )
+            self._emit_resolved(self.generation, self.track, hls_source or stream_url, duration, stream_info)
         except Exception as exc:  # pragma: no cover - network/tooling dependent
             details = "".join(traceback.format_exception_only(type(exc), exc)).strip()
             try:
@@ -87,6 +95,52 @@ class ResolveTask(QRunnable):
             self.signals.resolved.emit(*args)
         except RuntimeError:
             pass  # The owning window was closed while resolution was in flight.
+
+
+def _video_format_selector(context: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    # yt-dlp supplies sanitized formats ordered from worst to best. Keep the
+    # original preference for a single combined stream at up to 720p.
+    formats = [
+        fmt for fmt in context.get("formats") or []
+        if fmt.get("url") and not fmt.get("has_drm")
+    ]
+    combined = [
+        fmt for fmt in formats
+        if fmt.get("vcodec") not in {None, "none"}
+        and fmt.get("acodec") not in {None, "none"}
+    ]
+    if combined:
+        preferred = [fmt for fmt in combined if 0 < (fmt.get("height") or 0) <= 720]
+        yield (preferred or combined)[-1]
+        return
+
+    # YouTube may expose only separate audio/video renditions. Their shared
+    # HLS master links both; a video-only child URL would produce silent video.
+    # Resolution will narrow that master to one HD rendition before opening it.
+    hls_formats = [
+        fmt for fmt in formats
+        if fmt.get("protocol") in {"m3u8", "m3u8_native"}
+        and fmt.get("manifest_url")
+    ]
+    audio_masters = {
+        fmt["manifest_url"] for fmt in hls_formats
+        if fmt.get("vcodec") == "none" and fmt.get("acodec") != "none"
+    }
+    for fmt in reversed(hls_formats):
+        if (
+            fmt.get("vcodec") not in {None, "none"}
+            and fmt["manifest_url"] in audio_masters
+        ):
+            yield {
+                "format_id": "hls-master",
+                "url": fmt["manifest_url"],
+                "ext": "mp4",
+                "protocol": "m3u8",
+                "acodec": "unknown",
+                "vcodec": "unknown",
+                "http_headers": fmt.get("http_headers") or {},
+            }
+            return
 
 
 def _best_stream_url(formats: list[dict[str, Any]], require_video: bool = False) -> str:
@@ -116,6 +170,8 @@ def _best_stream_url(formats: list[dict[str, Any]], require_video: bool = False)
 
 
 def _stream_description(info: dict[str, Any], stream_url: str) -> str:
+    if info.get("format_id") == "hls-master":
+        return "HLS VIDEO + AUDIO"
     selected = info
     for candidate in info.get("formats") or []:
         if candidate.get("url") == stream_url:
@@ -250,6 +306,8 @@ class QtMediaDeckEngine(QObject):
         self._analysis_muted = False
         self._resolved_duration_ms = 0
         self._last_position_ms = 0
+        self._playlist_server: HlsPlaylistServer | None = None
+        self._video_height = 0
         self._last_audio_analysis_ms = -self._AUDIO_ANALYSIS_INTERVAL_MS
         self._beat_tracker = BeatTracker()
 
@@ -336,9 +394,10 @@ class QtMediaDeckEngine(QObject):
         task.signals.failed.connect(self._resolve_failed)
         self._pool.start(task)
 
-    @Slot(int, object, str, int, str)
+    @Slot(int, object, object, int, str)
     def _resolved(
-        self, generation: int, track: Track, stream_url: str, duration: int, stream_info: str
+        self, generation: int, track: Track, stream_url: str | HlsVideoSource,
+        duration: int, stream_info: str
     ) -> None:
         self._resolve_tasks.pop(generation, None)
         if generation != self._generation:
@@ -350,6 +409,13 @@ class QtMediaDeckEngine(QObject):
         self._resolving = False
         self._ready = True
         self._retry_pending = False
+        self._video_height = 0
+        if isinstance(stream_url, HlsVideoSource):
+            self._video_height = stream_url.height
+            if self._playlist_server is None:
+                self._playlist_server = HlsPlaylistServer()
+                self.destroyed.connect(self._playlist_server.close)
+            stream_url = self._playlist_server.publish(stream_url)
         self._player.setSource(QUrl(stream_url))
         # Some backends report failure synchronously from setSource(). Do not
         # overwrite a reconnect/error state with LOADED or start another play.
@@ -369,6 +435,14 @@ class QtMediaDeckEngine(QObject):
         self._resolving = False
         self._retry_pending = False
         self._ready = False
+        if any(reason in message.lower() for reason in (
+            "requested format is not available",
+            "no video formats found",
+            "no playable audio stream was found",
+            "no compatible hls video/audio rendition was found",
+        )):
+            self._report_failure(f"Could not load this track. {message}", "LOAD ERROR")
+            return
         self._schedule_stream_retry(f"Could not resolve a fresh stream: {message}")
 
     def play(self) -> None:
@@ -550,6 +624,8 @@ class QtMediaDeckEngine(QObject):
             codec = _safe_metadata_value(metadata, QMediaMetaData.Key.AudioCodec)
             container = _safe_metadata_value(metadata, QMediaMetaData.Key.FileFormat)
             parts: list[str] = []
+            if self._video_height:
+                parts.append(f"{self._video_height}P")
             try:
                 if bitrate and isinstance(bitrate, (int, float, str)):
                     parts.append(f"{round(float(bitrate) / 1000)} KBPS")
@@ -642,15 +718,7 @@ class QtMediaDeckEngine(QObject):
             and (track.source == "Local file" or track.webpage_url.startswith("file:"))
         )
         if not track or is_local or self._retry_attempt >= self._MAX_STREAM_RETRIES:
-            self._failure_reported = True
-            self._retry_pending = False
-            self._play_requested = False
-            self._autoplay_after_resolve = False
-            self._retry_timer.stop()
-            self._status_timer.stop()
-            self._player.stop()
-            self.stateChanged.emit("PLAYBACK ERROR")
-            self.error.emit(
+            self._report_failure(
                 "Playback stopped safely after the stream connection failed. "
                 f"{reason}"
             )
@@ -670,6 +738,21 @@ class QtMediaDeckEngine(QObject):
         # A short exponential delay prevents Qt/FFmpeg from hammering a socket
         # that Windows has just reset while keeping recovery quick for the DJ.
         self._retry_timer.start(500 * (2 ** (self._retry_attempt - 1)))
+
+    def _report_failure(self, message: str, state: str = "PLAYBACK ERROR") -> None:
+        if self._user_stopped or self._failure_reported:
+            return
+        self._failure_reported = True
+        self._ready = False
+        self._retry_pending = False
+        self._play_requested = False
+        self._autoplay_after_resolve = False
+        self._retry_timer.stop()
+        self._stall_timer.stop()
+        self._status_timer.stop()
+        self._player.stop()
+        self.stateChanged.emit(state)
+        self.error.emit(message)
 
     @Slot()
     def _retry_stream(self) -> None:

@@ -42,26 +42,38 @@ class ResultCard(QFrame):
         track: Track,
         parent: QWidget | None = None,
         targets: list[tuple[str, str, str]] | None = None,
+        compact: bool = False,
     ) -> None:
         super().__init__(parent)
         self.track = track
         self.setObjectName("ResultCard")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setFixedHeight(155)
+        self.setFixedHeight(175 if compact else 155)
 
-        row = QHBoxLayout(self)
-        row.setContentsMargins(12, 12, 12, 12)
-        row.setSpacing(14)
+        if compact:
+            card_layout = QVBoxLayout(self)
+            card_layout.setContentsMargins(12, 12, 12, 12)
+            card_layout.setSpacing(10)
+            row = QHBoxLayout()
+            card_layout.addLayout(row, 1)
+        else:
+            row = QHBoxLayout(self)
+            row.setContentsMargins(12, 12, 12, 12)
+        row.setSpacing(10 if compact else 14)
 
         self.thumbnail = QLabel("NO ART")
         self.thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.thumbnail.setFixedSize(160, 90)
+        self.thumbnail.setFixedSize(112 if compact else 160, 63 if compact else 90)
         self.thumbnail.setStyleSheet("background:#080b10;border:1px solid #34445f;border-radius:8px;color:#66758c;")
         row.addWidget(self.thumbnail, 0, Qt.AlignmentFlag.AlignVCenter)
 
         text_panel = QWidget()
         text_panel.setObjectName("ResultTextPanel")
-        text_panel.setFixedWidth(360)
+        if compact:
+            text_panel.setMinimumWidth(0)
+            text_panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        else:
+            text_panel.setFixedWidth(360)
         text_panel.setStyleSheet("background: transparent;")
         text_col = QVBoxLayout(text_panel)
         text_col.setContentsMargins(0, 0, 0, 0)
@@ -70,23 +82,33 @@ class ResultCard(QFrame):
         title.setWordWrap(True)
         title.setMaximumHeight(44)
         title.setToolTip(track.title)
+        if compact:
+            title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            title.ensurePolished()
+            title.setMaximumHeight(2 * title.fontMetrics().lineSpacing())
         text_col.addWidget(title)
 
         meta = " • ".join(part for part in [track.source, track.uploader, track.duration_text] if part)
         meta_label = QLabel(meta)
         meta_label.setObjectName("Subtle")
+        if compact:
+            meta_label.setWordWrap(True)
+            meta_label.setMaximumHeight(36)
+            meta_label.setToolTip(meta)
         text_col.addWidget(meta_label)
 
         description = QLabel(track.description or "No description supplied.")
         description.setWordWrap(True)
         description.setMaximumHeight(38)
         description.setToolTip(track.description)
+        description.setVisible(not compact)
         text_col.addWidget(description)
-        row.addWidget(text_panel, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(text_panel, 1 if compact else 0, Qt.AlignmentFlag.AlignVCenter)
 
-        buttons = QVBoxLayout()
+        buttons = QHBoxLayout() if compact else QVBoxLayout()
         buttons.setSpacing(7)
-        buttons.addStretch(1)
+        if not compact:
+            buttons.addStretch(1)
         targets = targets or [
             ("left", "ADD LEFT", "PrimaryButton"),
             ("right", "ADD RIGHT", "HotButton"),
@@ -94,18 +116,27 @@ class ResultCard(QFrame):
         for target, label, object_name in targets:
             add = QPushButton(label)
             add.setObjectName(object_name)
-            add.setFixedWidth(112)
+            if compact:
+                add.setMinimumWidth(112)
+            else:
+                add.setFixedWidth(112)
             add.clicked.connect(
                 lambda _checked=False, target=target: self.addRequested.emit(target, self.track)
             )
             buttons.addWidget(add)
         details = QPushButton("DETAILS")
-        details.setFixedWidth(112)
+        if compact:
+            details.setMinimumWidth(112)
+        else:
+            details.setFixedWidth(112)
         details.clicked.connect(self._show_details)
         buttons.addWidget(details)
-        buttons.addStretch(1)
-        row.addLayout(buttons)
-        row.addStretch(1)
+        if compact:
+            card_layout.addLayout(buttons)
+        else:
+            buttons.addStretch(1)
+            row.addLayout(buttons)
+            row.addStretch(1)
 
     def _show_details(self) -> None:
         QMessageBox.information(

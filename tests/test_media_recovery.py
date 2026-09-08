@@ -11,6 +11,7 @@ from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QApplication
 
 from app.media import QtMediaDeckEngine, _effective_duration_ms
+from app.hls import HlsVideoSource
 from app.models import Track
 
 
@@ -35,6 +36,8 @@ class MediaRecoveryTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.engine.stop()
+        if self.engine._playlist_server:
+            self.engine._playlist_server.close()
 
     def test_network_error_schedules_only_one_reconnect(self) -> None:
         states: list[str] = []
@@ -49,6 +52,32 @@ class MediaRecoveryTest(unittest.TestCase):
         self.assertEqual(self.engine._retry_attempt, 1)
         self.assertEqual(states[-1], "RECONNECTING 1/3")
         self.assertEqual(errors, [])
+
+    def test_unavailable_format_reports_once_without_reconnecting(self) -> None:
+        errors = Mock()
+        self.engine.error.connect(errors)
+        self.engine._resolving = True
+        message = "Requested format is not available. Use --list-formats for a list of available formats"
+
+        self.engine._resolve_failed(self.engine._generation, message)
+        self.engine._resolve_failed(self.engine._generation, message)
+
+        errors.assert_called_once()
+        self.assertIn(message, errors.call_args.args[0])
+        self.assertTrue(self.engine._failure_reported)
+        self.assertFalse(self.engine._retry_timer.isActive())
+        self.assertEqual(self.engine._retry_attempt, 0)
+
+    def test_resolution_timeout_still_retries(self) -> None:
+        errors = Mock()
+        self.engine.error.connect(errors)
+        self.engine._resolving = True
+
+        self.engine._resolve_failed(self.engine._generation, "The read operation timed out")
+
+        errors.assert_not_called()
+        self.assertTrue(self.engine._retry_timer.isActive())
+        self.assertEqual(self.engine._retry_attempt, 1)
 
     def test_end_of_media_does_not_advance_during_reconnect(self) -> None:
         ended_count = 0
@@ -284,6 +313,18 @@ class MediaRecoveryTest(unittest.TestCase):
         self.engine._player.play.assert_not_called()
         self.assertFalse(self.engine._stall_timer.isActive())
         self.assertEqual(self.engine._retry_attempt, 0)
+
+    def test_selected_hls_playlist_uses_loopback_player_source(self) -> None:
+        source = HlsVideoSource("https://example.invalid/master.m3u8", b"#EXTM3U\n", 720)
+
+        self.engine._resolved(self.engine._generation, self.engine._track, source, 217, "720P VIDEO + AUDIO")
+
+        self.engine._player.setSource.assert_called_once()
+        url = self.engine._player.setSource.call_args.args[0]
+        self.assertEqual(url.host(), "127.0.0.1")
+        self.assertTrue(url.path().endswith(".m3u8"))
+        self.assertEqual(self.engine._video_height, 720)
+        self.engine._player.setSourceDevice.assert_not_called()
 
     def test_pause_during_resolution_cancels_eventual_autoplay(self) -> None:
         self.engine._resolving = True

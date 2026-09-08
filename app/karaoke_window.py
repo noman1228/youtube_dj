@@ -152,8 +152,9 @@ class KaraokeWindow(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("EncoreMix - KARAOKE DECK")
-        self.resize(1400, 850)
         self.setMinimumSize(1000, 650)
+        available = self.screen().availableGeometry()
+        self.resize(min(1400, available.width() - 40), min(850, available.height() - 60))
 
         self.tracks: list[Track] = []
         self.current_index = -1
@@ -178,6 +179,7 @@ class KaraokeWindow(QDialog):
             root.addWidget(self._build_main_remote(parent))
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
         splitter.addWidget(self._build_search_panel())
         splitter.addWidget(self._build_deck_panel())
         splitter.setSizes([570, 800])
@@ -311,6 +313,7 @@ class KaraokeWindow(QDialog):
     def _build_search_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("CenterConsole")
+        panel.setMinimumWidth(340)
         layout = QVBoxLayout(panel)
 
         heading = QLabel("KARAOKE SEARCH")
@@ -460,6 +463,7 @@ class KaraokeWindow(QDialog):
         card = ResultCard(
             track,
             targets=[("karaoke", "ADD KARAOKE", "HotButton")],
+            compact=True,
         )
         card.addRequested.connect(self._add_result)
         self.results_layout.insertWidget(self.results_layout.count() - 1, card)
