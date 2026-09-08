@@ -20,6 +20,7 @@ class WaveformWidget(QWidget):
         self._samples: list[tuple[int, float]] = []
         self._duration_ms = 0
         self._position_ms = 0
+        self._seek_preview_fraction: float | None = None
         self.setMinimumHeight(68)
         self.setMaximumHeight(82)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -35,6 +36,7 @@ class WaveformWidget(QWidget):
         self._samples.clear()
         self._duration_ms = max(0, duration_ms)
         self._position_ms = 0
+        self._seek_preview_fraction = None
         self.update()
 
     def add_sample(self, time_ms: int, level: float) -> None:
@@ -87,11 +89,13 @@ class WaveformWidget(QWidget):
         painter.drawLine(graph.left(), center_y, graph.right(), center_y)
 
         graph_width = max(1, graph.width())
-        played_index = (
-            min(self._BIN_COUNT, int(self._position_ms / self._duration_ms * self._BIN_COUNT))
-            if self._duration_ms > 0
-            else 0
-        )
+        fraction = self._seek_preview_fraction
+        if fraction is None:
+            fraction = (
+                max(0.0, min(1.0, self._position_ms / self._duration_ms))
+                if self._duration_ms > 0 else 0.0
+            )
+        played_index = min(self._BIN_COUNT, int(fraction * self._BIN_COUNT))
         for index, level in enumerate(self._levels):
             if not self._known[index]:
                 continue
@@ -107,28 +111,43 @@ class WaveformWidget(QWidget):
             painter.drawText(graph, Qt.AlignmentFlag.AlignCenter, "WAVEFORM READY ON PLAY")
 
         if self._duration_ms > 0:
-            fraction = max(0.0, min(1.0, self._position_ms / self._duration_ms))
             playhead_x = graph.left() + round(fraction * graph_width)
             painter.setPen(QPen(QColor("#ffffff"), 2))
             painter.drawLine(playhead_x, graph.top(), playhead_x, graph.bottom())
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._seek_at(event.position().x())
+        if event.button() == Qt.MouseButton.LeftButton and self._duration_ms > 0:
+            self._preview_seek(event.position().x())
             event.accept()
             return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            self._seek_at(event.position().x())
+        if event.buttons() & Qt.MouseButton.LeftButton and self._seek_preview_fraction is not None:
+            self._preview_seek(event.position().x())
             event.accept()
             return
         super().mouseMoveEvent(event)
 
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._seek_preview_fraction is not None:
+            self._seek_preview_fraction = None
+            # Commit once. Seeking for every pointer movement repeatedly
+            # flushes the decoder and interrupts the audible track.
+            self._seek_at(event.position().x())
+            self.update()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _fraction_at(self, x: float) -> float:
+        return max(0.0, min(1.0, (x - 8) / max(1, self.width() - 17)))
+
+    def _preview_seek(self, x: float) -> None:
+        self._seek_preview_fraction = self._fraction_at(x)
+        self.update()
+
     def _seek_at(self, x: float) -> None:
         if self._duration_ms <= 0:
             return
-        left = 8
-        width = max(1, self.width() - 17)
-        self.seekRequested.emit(max(0.0, min(1.0, (x - left) / width)))
+        self.seekRequested.emit(self._fraction_at(x))

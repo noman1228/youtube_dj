@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import math
+import tempfile
+import threading
+import time
 import traceback
+from collections import OrderedDict
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterator
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, QTimer, QUrl, Signal, Slot
 from PySide6.QtMultimedia import (
     QAudioBuffer,
     QAudioBufferOutput,
@@ -18,11 +24,40 @@ from PySide6.QtMultimedia import (
 from .beat import BeatInfo, BeatTracker
 from .hls import HlsPlaylistServer, HlsVideoSource, select_hls_video
 from .models import Track
+from .media_cache import prepare_media
+
+
+@dataclass
+class PreparedMedia:
+    # Keep the directory alive for as long as any deck uses this source.
+    directory: tempfile.TemporaryDirectory
+    path: Path
+    duration: int
+    description: str
+    height: int = 0
+    size: int = 0
+
+
+_prepared_cache: OrderedDict[tuple[str, bool, int | None], PreparedMedia] = OrderedDict()
+_cache_lock = threading.Lock()
+_prepare_pool: QThreadPool | None = None
+
+
+def _media_pool() -> QThreadPool:
+    global _prepare_pool
+    if _prepare_pool is None:
+        # Queue speculative work behind requested loads; avoid three extractors
+        # and downloaders competing with the audio/video decoders at once.
+        _prepare_pool = QThreadPool()
+        _prepare_pool.setMaxThreadCount(1)
+        _prepare_pool.setThreadPriority(QThread.Priority.LowPriority)
+    return _prepare_pool
 
 
 class ResolveSignals(QObject):
     resolved = Signal(int, object, object, int, str)
     failed = Signal(int, str)
+    preparing = Signal(int)
 
 
 class ResolveTask(QRunnable):
@@ -33,10 +68,16 @@ class ResolveTask(QRunnable):
         self.video = video
         self.max_height = max_height
         self.signals = ResolveSignals()
+        self.cancelled = threading.Event()
+
+    def _check_cancelled(self, _progress: object = None) -> None:
+        if self.cancelled.is_set():
+            raise RuntimeError("Track preparation cancelled.")
 
     @Slot()
     def run(self) -> None:
         try:
+            self._check_cancelled()
             if self.track.source == "Local file" or self.track.webpage_url.startswith("file:"):
                 self._emit_resolved(
                     self.generation,
@@ -47,7 +88,19 @@ class ResolveTask(QRunnable):
                 )
                 return
 
+            key = (self.track.webpage_url, self.video, self.max_height)
+            with _cache_lock:
+                cached = _prepared_cache.get(key)
+                if cached and cached.path.is_file():
+                    _prepared_cache.move_to_end(key)
+                else:
+                    cached = None
+            if cached:
+                self._emit_resolved(self.generation, self.track, cached, cached.duration, cached.description)
+                return
+
             import yt_dlp
+            from yt_dlp.networking import Request
 
             options: Any = {
                 "quiet": True,
@@ -58,21 +111,34 @@ class ResolveTask(QRunnable):
                     (lambda context: _video_format_selector(context, self.max_height)) if self.video else "bestaudio/best"
                 ),
                 "socket_timeout": 20,
+                "retries": 3,
+                "fragment_retries": 3,
+                "extractor_retries": 2,
+                "skip_unavailable_fragments": False,
+                "concurrent_fragment_downloads": 1,
+                "progress_hooks": [self._check_cancelled],
                 # yt-dlp enables only Deno by default; support the Node.js
                 # installation documented for this app as well.
                 "js_runtimes": {"deno": {}, "node": {}},
             }
+            directory = tempfile.TemporaryDirectory(prefix="encoremix-", ignore_cleanup_errors=True)
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(self.track.webpage_url, download=False)
+                self._check_cancelled()
+                if not info:
+                    raise RuntimeError("No playable stream information was returned.")
+                if info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming", "post_live"}:
+                    raise RuntimeError("Live streams cannot be fully prepared for uninterrupted playback.")
                 hls_source = None
                 if info and info.get("format_id") == "hls-master":
-                    with ydl.urlopen(info["url"]) as response:
+                    with ydl.urlopen(Request(info["url"], headers=info.get("http_headers") or {})) as response:
                         manifest = response.read(1_048_577)
                     if len(manifest) > 1_048_576:
                         raise RuntimeError("The HLS playlist is too large to open safely.")
                     hls_source = select_hls_video(manifest.decode("utf-8-sig"), info["url"], self.max_height)
-            if not info:
-                raise RuntimeError("No playable stream information was returned.")
+                self.signals.preparing.emit(self.generation)
+                path = prepare_media(ydl, info, hls_source, Path(directory.name), self.cancelled)
+                self._check_cancelled()
             stream_url = info.get("url") or _best_stream_url(
                 info.get("formats") or [], require_video=self.video
             )
@@ -83,8 +149,25 @@ class ResolveTask(QRunnable):
                 f"{hls_source.height}P VIDEO + AUDIO" if hls_source
                 else _stream_description(dict(info), stream_url)
             )
-            self._emit_resolved(self.generation, self.track, hls_source or stream_url, duration, stream_info)
+            prepared = PreparedMedia(
+                directory, path, duration, stream_info,
+                hls_source.height if hls_source else int(info.get("height") or 0),
+                sum(item.stat().st_size for item in Path(directory.name).rglob("*") if item.is_file()),
+            )
+            with _cache_lock:
+                _prepared_cache[key] = prepared
+                _prepared_cache.move_to_end(key)
+                # Eviction drops cache ownership only; active and next-up decks
+                # pin their assets independently until they change sources.
+                while len(_prepared_cache) > 6 or (
+                    len(_prepared_cache) > 1
+                    and sum(asset.size for asset in _prepared_cache.values()) > 2 * 1024**3
+                ):
+                    _prepared_cache.popitem(last=False)
+            self._emit_resolved(self.generation, self.track, prepared, duration, stream_info)
         except Exception as exc:  # pragma: no cover - network/tooling dependent
+            if self.cancelled.is_set():
+                return
             details = "".join(traceback.format_exception_only(type(exc), exc)).strip()
             try:
                 self.signals.failed.emit(self.generation, details)
@@ -92,6 +175,8 @@ class ResolveTask(QRunnable):
                 pass  # The owning window was closed while resolution was in flight.
 
     def _emit_resolved(self, *args: object) -> None:
+        if self.cancelled.is_set():
+            return
         try:
             self.signals.resolved.emit(*args)
         except RuntimeError:
@@ -234,8 +319,8 @@ def _safe_metadata_value(metadata: QMediaMetaData, key: QMediaMetaData.Key) -> o
         return None
 
 
-def _audio_buffer_level(buffer: QAudioBuffer) -> float | None:
-    """Return an amplified RMS level without retaining the decoder's buffer."""
+def _audio_buffer_level(buffer: QAudioBuffer, *, scale: float = 2.4) -> float | None:
+    """Return scaled RMS without retaining the decoder's buffer."""
     if not buffer.isValid() or buffer.sampleCount() <= 0:
         return None
     raw = memoryview(buffer.constData())
@@ -259,16 +344,22 @@ def _audio_buffer_level(buffer: QAudioBuffer) -> float | None:
         return None
     # Level metering does not need every decoded sample.  Keep this callback
     # cheap because Qt delivers it on the GUI thread for both decks.
-    step = max(1, (len(values) + 511) // 512)
+    # Sample complete frames so the stride cannot skip one stereo channel.
+    channels = max(1, buffer.format().channelCount())
+    frames = len(values) // channels
+    frame_budget = max(1, 512 // channels)
+    step = max(1, (frames + frame_budget - 1) // frame_budget)
     square_sum = 0.0
     sample_count = 0
-    for index in range(0, len(values), step):
-        value = normalize(values[index])
-        square_sum += value * value
-        sample_count += 1
+    for frame in range(0, frames, step):
+        for channel in range(channels):
+            value = normalize(values[frame * channels + channel])
+            if math.isfinite(value):
+                square_sum += value * value
+            sample_count += 1
     if not sample_count:
         return None
-    return max(0.0, min(1.0, math.sqrt(square_sum / sample_count) * 2.4))
+    return max(0.0, min(1.0, math.sqrt(square_sum / sample_count) * scale))
 
 
 def _effective_duration_ms(player_duration_ms: int, resolved_duration_ms: int) -> int:
@@ -298,6 +389,7 @@ class QtMediaDeckEngine(QObject):
     ended = Signal()
     error = Signal(str)
     waveformSample = Signal(int, float)
+    audioLevelChanged = Signal(float)
 
     def __init__(
         self,
@@ -306,8 +398,16 @@ class QtMediaDeckEngine(QObject):
         capture_waveform: bool = False,
     ) -> None:
         super().__init__(parent)
-        self._pool = QThreadPool.globalInstance()
+        self._pool = _media_pool()
         self._resolve_tasks: dict[int, ResolveTask] = {}
+        self._prefetch_task: ResolveTask | None = None
+        self._prefetch_generation = 0
+        self._prefetched_media: PreparedMedia | None = None
+        self._prefetch_url = ""
+        self._prepared_media: PreparedMedia | None = None
+        self._source_is_local = False
+        self._playback_confirmed = False
+        self._last_progress_at = 0.0
         self._video = video
         self._generation = 0
         self._track: Track | None = None
@@ -388,7 +488,17 @@ class QtMediaDeckEngine(QObject):
         self._player.setVideoSink(sink)
 
     def load(self, track: Track, autoplay: bool = False) -> None:
+        # Let next-up preparation finish and populate the shared cache. The
+        # requested load is queued ahead of other speculative work.
+        prefetch = self._prefetch_task
+        self._prefetch_task = None
         self.stop()
+        if prefetch and prefetch.track.webpage_url == track.webpage_url:
+            # This work now belongs to the requested load. Updating the next
+            # queue item must not cancel a nearly completed incoming track.
+            self._resolve_tasks[prefetch.generation] = prefetch
+        else:
+            self._prefetch_task = prefetch
         self._video_max_height = None
         self._video_height = 0
         self._hls_source = None
@@ -403,7 +513,54 @@ class QtMediaDeckEngine(QObject):
         self._last_audio_analysis_ms = -self._AUDIO_ANALYSIS_INTERVAL_MS
         self._play_requested = autoplay
         self._user_stopped = False
+        self._source_is_local = False
         self._begin_resolve(track, autoplay)
+
+    def is_preparing(self) -> bool:
+        return self._resolving or self._retry_pending
+
+    def has_playback_progress(self) -> bool:
+        return (
+            self._playback_confirmed and self.is_playing()
+            and time.monotonic() - self._last_progress_at < 1.5
+        )
+
+    def prefetch(self, track: Track | None) -> None:
+        if track and self._prefetch_url == track.webpage_url and (
+            self._prefetch_task or self._prefetched_media
+        ):
+            return
+        if self._prefetch_task:
+            self._prefetch_task.cancelled.set()
+            self._prefetch_task = None
+        self._prefetched_media = None
+        self._prefetch_url = ""
+        if not track or track.source == "Local file" or track.webpage_url.startswith("file:"):
+            return
+        if self._track and self._track.webpage_url == track.webpage_url:
+            return
+        self._prefetch_generation -= 1
+        self._prefetch_url = track.webpage_url
+        task = ResolveTask(self._prefetch_generation, track, video=self._video)
+        self._prefetch_task = task
+        task.signals.resolved.connect(self._prefetched)
+        task.signals.failed.connect(self._prefetch_failed)
+        self._pool.start(task, -1)
+
+    @Slot(int, object, object, int, str)
+    def _prefetched(self, generation: int, _track: Track, source: object, _duration: int, _info: str) -> None:
+        self._resolve_tasks.pop(generation, None)
+        if self._prefetch_task and generation == self._prefetch_task.generation:
+            self._prefetched_media = source if isinstance(source, PreparedMedia) else None
+            self._prefetch_task = None
+
+    @Slot(int, str)
+    def _prefetch_failed(self, generation: int, _message: str) -> None:
+        self._resolve_tasks.pop(generation, None)
+        if self._prefetch_task and generation == self._prefetch_task.generation:
+            # Speculative preparation must never stop the current song or
+            # display a modal error. An explicit load can retry later.
+            self._prefetch_task = None
 
     def _begin_resolve(self, track: Track, autoplay: bool) -> None:
         self._stall_timer.stop()
@@ -413,16 +570,22 @@ class QtMediaDeckEngine(QObject):
         self._resolving = True
         self._autoplay_after_resolve = autoplay
         self._stream_info = "VIDEO STREAM" if self._video else "AUDIO STREAM"
-        self.stateChanged.emit("RESOLVING")
+        self.stateChanged.emit("PREPARING")
         task = ResolveTask(self._generation, track, video=self._video, max_height=self._video_max_height)
         self._resolve_tasks[self._generation] = task
         task.signals.resolved.connect(self._resolved)
         task.signals.failed.connect(self._resolve_failed)
-        self._pool.start(task)
+        task.signals.preparing.connect(self._preparing)
+        self._pool.start(task, 1)
+
+    @Slot(int)
+    def _preparing(self, generation: int) -> None:
+        if generation == self._generation and self._resolving:
+            self.stateChanged.emit("PREPARING FULL TRACK")
 
     @Slot(int, object, object, int, str)
     def _resolved(
-        self, generation: int, track: Track, stream_url: str | HlsVideoSource,
+        self, generation: int, track: Track, stream_url: str | HlsVideoSource | PreparedMedia,
         duration: int, stream_info: str
     ) -> None:
         self._resolve_tasks.pop(generation, None)
@@ -436,6 +599,11 @@ class QtMediaDeckEngine(QObject):
         self._ready = True
         self._retry_pending = False
         self._video_height = 0
+        previous_media = self._prepared_media
+        self._prepared_media = stream_url if isinstance(stream_url, PreparedMedia) else None
+        if isinstance(stream_url, PreparedMedia):
+            self._video_height = stream_url.height
+            stream_url = stream_url.path.as_uri()
         self._hls_source = stream_url if isinstance(stream_url, HlsVideoSource) else None
         if isinstance(stream_url, HlsVideoSource):
             self._video_height = stream_url.height
@@ -443,7 +611,10 @@ class QtMediaDeckEngine(QObject):
                 self._playlist_server = HlsPlaylistServer()
                 self.destroyed.connect(self._playlist_server.close)
             stream_url = self._playlist_server.publish(stream_url)
+        self._source_is_local = QUrl(stream_url).isLocalFile()
         self._player.setSource(QUrl(stream_url))
+        # Release the previous asset only after the backend has changed source.
+        del previous_media
         # Some backends report failure synchronously from setSource(). Do not
         # overwrite a reconnect/error state with LOADED or start another play.
         if self._retry_pending or self._failure_reported:
@@ -467,6 +638,9 @@ class QtMediaDeckEngine(QObject):
             "no video formats found",
             "no playable audio stream was found",
             "no compatible hls video/audio rendition was found",
+            "live streams cannot",
+            "incomplete",
+            "not supported",
         )):
             self._report_failure(f"Could not load this track. {message}", "LOAD ERROR")
             return
@@ -496,6 +670,7 @@ class QtMediaDeckEngine(QObject):
         self._play_requested = False
         self._autoplay_after_resolve = False
         self._stall_timer.stop()
+        self._playback_confirmed = False
         self._player.pause()
 
     def stop(self) -> None:
@@ -507,6 +682,14 @@ class QtMediaDeckEngine(QObject):
         self._stall_timer.stop()
         self._retry_position_ms = 0
         self._last_position_ms = 0
+        self._playback_confirmed = False
+        self._last_progress_at = 0.0
+        for task in self._resolve_tasks.values():
+            task.cancelled.set()
+        self._resolve_tasks.clear()
+        if self._prefetch_task:
+            self._prefetch_task.cancelled.set()
+            self._prefetch_task = None
         if self._resolving:
             # Resolution work cannot be forcibly killed safely, so invalidate
             # its generation and ignore its eventual callback.
@@ -543,13 +726,19 @@ class QtMediaDeckEngine(QObject):
         self._apply_volume()
 
     def set_playback_rate(self, rate: float) -> None:
-        self._player.setPlaybackRate(max(0.5, min(2.0, rate)))
+        rate = max(0.5, min(2.0, rate))
+        if abs(self._player.playbackRate() - rate) > 0.0001:
+            self._player.setPlaybackRate(rate)
 
     def playback_rate(self) -> float:
         return self._player.playbackRate()
 
     def beat_info(self) -> BeatInfo | None:
         return self._beat_tracker.info()
+
+    def output_volume(self) -> float:
+        """Effective deck gain, including crossfade and silent analysis."""
+        return self._audio_output.volume()
 
     def seek_ms(self, position_ms: int) -> None:
         if self._ready:
@@ -558,6 +747,8 @@ class QtMediaDeckEngine(QObject):
             if duration > 0:
                 target = min(target, duration)
             self._last_position_ms = target
+            self._playback_confirmed = False
+            self._last_progress_at = 0.0
             self._arm_stall_timer()
             self._player.setPosition(target)
 
@@ -578,7 +769,7 @@ class QtMediaDeckEngine(QObject):
         if self._resolved_duration_ms > 0:
             return True
         track = self._track
-        is_local = bool(
+        is_local = self._source_is_local or bool(
             track
             and (track.source == "Local file" or track.webpage_url.startswith("file:"))
         )
@@ -594,11 +785,22 @@ class QtMediaDeckEngine(QObject):
             and not self._failure_reported
         ):
             if position != self._last_position_ms:
+                self._confirm_playback_progress()
                 self._arm_stall_timer()
             # Keep the last useful position if Qt resets to zero before it
             # reports EndOfMedia or an error on a truncated remote stream.
             self._last_position_ms = position
         self.positionChanged.emit(*self.current_times())
+
+    def _confirm_playback_progress(self) -> None:
+        if not self._play_requested or self._user_stopped or self._resolving or self._retry_pending:
+            return
+        if not self.is_playing():
+            return
+        self._last_progress_at = time.monotonic()
+        if not self._playback_confirmed:
+            self._playback_confirmed = True
+            self.playbackStarted.emit()
 
     @Slot(int)
     def _duration_changed(self, _duration: int) -> None:
@@ -606,6 +808,8 @@ class QtMediaDeckEngine(QObject):
 
     @Slot(QAudioBuffer)
     def _audio_buffer_received(self, buffer: QAudioBuffer) -> None:
+        if buffer.isValid() and buffer.sampleCount() > 0:
+            self._confirm_playback_progress()
         start_time = buffer.startTime()
         time_ms = round(start_time / 1000) if start_time >= 0 else self._player.position()
         if (
@@ -614,9 +818,13 @@ class QtMediaDeckEngine(QObject):
         ):
             return
         self._last_audio_analysis_ms = time_ms
-        level = _audio_buffer_level(buffer)
-        if level is None:
+        rms = _audio_buffer_level(buffer, scale=1.0)
+        if rms is None:
+            self.audioLevelChanged.emit(0.0)
             return
+        # This player's source level is independent of gain and crossfader.
+        self.audioLevelChanged.emit(rms)
+        level = min(1.0, rms * 2.4)
         self._beat_tracker.add_level(time_ms, level)
         self.waveformSample.emit(time_ms, level)
 
@@ -627,11 +835,12 @@ class QtMediaDeckEngine(QObject):
             self._showing_stream_info = False
             self.stateChanged.emit("PLAYING")
             self._status_timer.start()
-            self.playbackStarted.emit()
         elif state == QMediaPlayer.PlaybackState.PausedState:
+            self._playback_confirmed = False
             self._status_timer.stop()
             self.stateChanged.emit("PAUSED")
         elif self._track:
+            self._playback_confirmed = False
             self._status_timer.stop()
             self.stateChanged.emit("LOADED")
 
@@ -686,7 +895,7 @@ class QtMediaDeckEngine(QObject):
                 return
             position = max(self._player.position(), self._last_position_ms)
             if (
-                self._is_remote_track()
+                (self._is_remote_track() or self._prepared_media is not None)
                 and self._resolved_duration_ms > 0
                 and position + self._END_TOLERANCE_MS < self._resolved_duration_ms
             ):
@@ -703,6 +912,7 @@ class QtMediaDeckEngine(QObject):
     def _is_remote_track(self) -> bool:
         return bool(
             self._track
+            and not self._source_is_local
             and self._track.source != "Local file"
             and not self._track.webpage_url.startswith("file:")
         )
@@ -717,13 +927,16 @@ class QtMediaDeckEngine(QObject):
             and not self._resolving
             and not self._failure_reported
         ):
-            # Allow initial startup time, but react sooner to mid-song buffering.
-            timeout = 5000 if self._video and self._last_position_ms > 0 else self._STREAM_STALL_TIMEOUT_MS
-            self._stall_timer.start(timeout)
+            self._stall_timer.start(self._STREAM_STALL_TIMEOUT_MS)
 
     @Slot()
     def _stream_timed_out(self) -> None:
         if self._play_requested and self._ready and self._is_remote_track():
+            position = self._player.position()
+            if position > self._last_position_ms or self.has_playback_progress():
+                self._last_position_ms = max(position, self._last_position_ms)
+                self._arm_stall_timer()
+                return
             self._schedule_stream_retry(
                 "The stream made no playback progress for "
                 f"{self._stall_timer.interval() // 1000} seconds."
@@ -746,11 +959,14 @@ class QtMediaDeckEngine(QObject):
         self._ready = False
         self._stall_timer.stop()
         track = self._track
-        is_local = bool(
+        is_local = self._source_is_local or bool(
             track
             and (track.source == "Local file" or track.webpage_url.startswith("file:"))
         )
-        if not track or is_local or self._retry_attempt >= self._MAX_STREAM_RETRIES:
+        if is_local:
+            self._report_failure(f"The prepared or local media could not continue playing. {reason}")
+            return
+        if not track or self._retry_attempt >= self._MAX_STREAM_RETRIES:
             self._report_failure(
                 "Playback stopped safely after the stream connection failed. "
                 f"{reason}"

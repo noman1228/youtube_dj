@@ -5,6 +5,7 @@ from PySide6.QtGui import QBrush, QColor, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDial,
     QFileDialog,
     QFrame,
@@ -21,6 +22,8 @@ from PySide6.QtWidgets import (
 
 from .media import QtMediaDeckEngine
 from .models import Track
+from .playlist_header import PlaylistHeader
+from .vu_meter import VuMeter
 from .waveform_widget import WaveformWidget
 
 
@@ -92,7 +95,9 @@ class DeckWidget(QFrame):
         self.gain.setNotchesVisible(True)
         gain_row.addWidget(gain_text)
         gain_row.addWidget(self.gain)
-        gain_row.addStretch(1)
+        gain_row.addSpacing(8)
+        self.vu_meter = VuMeter(side)
+        gain_row.addWidget(self.vu_meter, 1)
         info.addLayout(gain_row)
         hero.addLayout(info, 1)
         root.addLayout(hero)
@@ -126,18 +131,22 @@ class DeckWidget(QFrame):
             transport.addWidget(button)
         root.addLayout(transport)
 
-        playlist_header = QHBoxLayout()
         playlist_label = QLabel(f"{side.upper()} SET PLAYLIST")
         playlist_label.setStyleSheet("font-weight:800;letter-spacing:1px;")
+        self.play_on_double_click = QCheckBox("PLAY ON DOUBLE-CLICK")
+        self.play_on_double_click.setChecked(False)
+        self.play_on_double_click.setToolTip(
+            "When checked, double-clicking a playlist track loads and plays it. "
+            "When unchecked, double-click only loads the track."
+        )
         self.remove_button = QPushButton("REMOVE")
         self.reenable_button = QPushButton("RE-ENABLE")
         self.move_button = QPushButton("MOVE RIGHT" if side == "left" else "MOVE LEFT")
-        playlist_header.addWidget(playlist_label)
-        playlist_header.addStretch(1)
-        playlist_header.addWidget(self.move_button)
-        playlist_header.addWidget(self.reenable_button)
-        playlist_header.addWidget(self.remove_button)
-        root.addLayout(playlist_header)
+        self.playlist_header = PlaylistHeader(
+            playlist_label, self.play_on_double_click,
+            (self.move_button, self.reenable_button, self.remove_button),
+        )
+        root.addWidget(self.playlist_header)
 
         self.playlist = QListWidget()
         self.playlist.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -150,10 +159,12 @@ class DeckWidget(QFrame):
         self.engine.positionChanged.connect(self._position_changed)
         self.engine.waveformSample.connect(self.waveform.add_sample)
         self.engine.waveformSample.connect(self._update_bpm)
+        self.engine.audioLevelChanged.connect(self._update_vu)
         self.engine.loaded.connect(self._loaded)
         self.engine.ended.connect(self._ended)
         self.engine.error.connect(self._show_error)
         self.engine.playbackStarted.connect(lambda: self.playbackStarted.emit(self.side))
+        self.playlistChanged.connect(self._prefetch_next)
         self.play_button.clicked.connect(self.play)
         self.stop_button.clicked.connect(self.engine.stop)
         self.next_button.clicked.connect(lambda: self.advance_to_next(autoplay=True))
@@ -187,6 +198,8 @@ class DeckWidget(QFrame):
         first_unplayed = self._first_unplayed_index()
         if first_unplayed is not None:
             self.load_index(first_unplayed, autoplay=False)
+        else:
+            self.engine.prefetch(None)
 
     def load_index(self, index: int, autoplay: bool = False) -> None:
         if not (0 <= index < len(self.tracks)) or self.tracks[index].played:
@@ -195,12 +208,26 @@ class DeckWidget(QFrame):
         self.playlist.setCurrentRow(index)
         track = self.tracks[index]
         self.waveform.reset(int(track.duration_seconds or 0) * 1000)
+        self.vu_meter.reset()
         self.bpm_label.setText("BPM --")
         self.title_label.setText(track.title)
         self.meta_label.setText(" • ".join(part for part in [track.source, track.uploader, track.duration_text] if part))
         self._load_art(track.thumbnail_url)
         self.engine.load(track, autoplay=autoplay)
+        self._prefetch_next()
         self._refresh_numbering()
+
+    def _prefetch_next(self) -> None:
+        """Prepare the next queue entry without changing this deck's player."""
+        if not (0 <= self.current_index < len(self.tracks)) or self.engine.track is not self.tracks[self.current_index]:
+            self.engine.prefetch(None)
+            return
+        for offset in range(1, len(self.tracks)):
+            track = self.tracks[(self.current_index + offset) % len(self.tracks)]
+            if not track.played:
+                self.engine.prefetch(track)
+                return
+        self.engine.prefetch(None)
 
     def play(self) -> None:
         if self.current_index < 0 or self.tracks[self.current_index].played:
@@ -281,7 +308,7 @@ class DeckWidget(QFrame):
     def _double_clicked(self, item: QListWidgetItem) -> None:
         row = self.playlist.row(item)
         if 0 <= row < len(self.tracks) and not self.tracks[row].played:
-            self.load_index(row, autoplay=True)
+            self.load_index(row, autoplay=self.play_on_double_click.isChecked())
 
     def _ended(self) -> None:
         if 0 <= self.current_index < len(self.tracks):
@@ -297,6 +324,14 @@ class DeckWidget(QFrame):
     def _state_changed(self, state: str) -> None:
         self.state_label.setText(state)
         self.state_label.setToolTip(state)
+        if not self.engine.is_playing():
+            self.vu_meter.reset()
+
+    def _update_vu(self, level: float) -> None:
+        if self.engine.is_playing():
+            self.vu_meter.set_level(level)
+        else:
+            self.vu_meter.reset()
 
     def _position_changed(self, current_ms: int, total_ms: int) -> None:
         self.elapsed.setText(_format_ms(current_ms))

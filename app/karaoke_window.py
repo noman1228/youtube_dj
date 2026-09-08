@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEasingCurve, QObject, QRect, QThreadPool, QTimer, Qt, QUrl, QVariantAnimation, Signal, Slot
-from PySide6.QtGui import QBrush, QCloseEvent, QColor, QImage, QKeyEvent, QMouseEvent, QPainter
+from PySide6.QtCore import QByteArray, QEasingCurve, QObject, QRect, QRectF, QSize, QThreadPool, QTimer, Qt, QUrl, QVariantAnimation, Signal, Slot
+from PySide6.QtGui import QBrush, QCloseEvent, QColor, QImage, QKeyEvent, QMouseEvent, QPainter, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtMultimedia import QVideoFrame, QVideoSink
 from PySide6.QtWidgets import (
@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFrame,
+    QGraphicsBlurEffect,
+    QGraphicsScene,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -61,7 +63,10 @@ class VideoDisplayWidget(QWidget):
             # Fade the old frame to black beneath transparent parts of the logo.
             painter.setOpacity(self._idle_opacity)
             painter.fillRect(self.rect(), QColor("#000000"))
-            self._paint_image(painter, self._idle_image)
+            self._paint_idle(painter)
+
+    def _paint_idle(self, painter: QPainter) -> None:
+        self._paint_image(painter, self._idle_image)
 
     def _paint_image(self, painter: QPainter, image: QImage | None) -> None:
         if image is None or image.isNull():
@@ -85,10 +90,79 @@ class ProjectorVideoWidget(VideoDisplayWidget):
         super().__init__(parent)
         self._artist = ""
         self._show_artist = True
+        self._beat_pulse = 0.0
+        self._logo_cache_size = QSize()
+        self._logo_cache = QImage()
+        self._glow_image = self._make_glow()
         self._idle_fade = QVariantAnimation(self)
         self._idle_fade.setDuration(500)
         self._idle_fade.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self._idle_fade.valueChanged.connect(self._fade_changed)
+
+    @property
+    def logo_visible(self) -> bool:
+        return self._idle_opacity > 0
+
+    def set_beat_pulse(self, strength: float) -> None:
+        strength = max(0.0, min(1.0, strength))
+        if abs(strength - self._beat_pulse) < 0.001:
+            return
+        self._beat_pulse = strength
+        if self.logo_visible:
+            self.update()
+
+    def _make_glow(self) -> QImage:
+        if self._idle_image.isNull():
+            return QImage()
+        # Blur a small alpha silhouette once, then reuse it for every frame.
+        silhouette = self._idle_image.scaled(
+            384, 384, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        painter = QPainter(silhouette)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(silhouette.rect(), QColor("#00cfff"))
+        painter.end()
+        scene = QGraphicsScene()
+        item = scene.addPixmap(QPixmap.fromImage(silhouette))
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(28)
+        item.setGraphicsEffect(blur)
+        self._glow_content_size = silhouette.size()
+        self._glow_margin = 42
+        bounds = QRectF(silhouette.rect()).adjusted(-42, -42, 42, 42)
+        glow = QImage(bounds.size().toSize(), QImage.Format.Format_ARGB32_Premultiplied)
+        glow.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(glow)
+        scene.render(painter, QRectF(glow.rect()), bounds)
+        painter.end()
+        return glow
+
+    def _paint_idle(self, painter: QPainter) -> None:
+        if self._idle_image.isNull():
+            return
+        if self._logo_cache_size != self.size():
+            self._logo_cache_size = self.size()
+            self._logo_cache = self._idle_image.scaled(
+                self.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+        scale = 0.90 * (1.0 + 0.07 * self._beat_pulse)
+        width, height = self._logo_cache.width() * scale, self._logo_cache.height() * scale
+        target = QRectF((self.width() - width) / 2, (self.height() - height) / 2, width, height)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        opacity = painter.opacity()
+        if not self._glow_image.isNull():
+            margin_x = width * self._glow_margin / self._glow_content_size.width()
+            margin_y = height * self._glow_margin / self._glow_content_size.height()
+            painter.setOpacity(opacity * (0.35 + 0.65 * self._beat_pulse))
+            painter.drawImage(target.adjusted(-margin_x, -margin_y, margin_x, margin_y), self._glow_image)
+        painter.setOpacity(opacity)
+        painter.drawImage(target, self._logo_cache)
+        if self._beat_pulse > 0:
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+            painter.setOpacity(opacity * 0.12 * self._beat_pulse)
+            painter.drawImage(target, self._logo_cache)
+        painter.restore()
 
     def set_idle(self, visible: bool) -> None:
         if visible == self._show_idle:
@@ -233,6 +307,7 @@ class KaraokeWindow(QDialog):
         self._network.finished.connect(self._thumbnail_finished)
 
         self.engine = QtMediaDeckEngine(self, video=True)
+        self.queueChanged.connect(self._prefetch_next)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 14, 14, 14)
@@ -594,6 +669,18 @@ class KaraokeWindow(QDialog):
             return
         self.tracks[index].played = False
         self._load_index(index, autoplay=True)
+
+    def _prefetch_next(self) -> None:
+        """Prepare the next singer's media while preserving active playback."""
+        if not (0 <= self.current_index < len(self.tracks)) or self.engine.track is not self.tracks[self.current_index]:
+            self.engine.prefetch(None)
+            return
+        for offset in range(1, len(self.tracks)):
+            track = self.tracks[(self.current_index + offset) % len(self.tracks)]
+            if not track.played:
+                self.engine.prefetch(track)
+                return
+        self.engine.prefetch(None)
 
     def play(self) -> None:
         if self.current_index < 0 or self.tracks[self.current_index].played:

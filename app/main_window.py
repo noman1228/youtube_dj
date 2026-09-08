@@ -5,7 +5,7 @@ import math
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QSignalBlocker, QTimer, Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QVBoxLayout,
@@ -33,7 +34,9 @@ from .beat import (
 )
 from .deck_widget import DeckWidget
 from .karaoke_window import KaraokeWindow
+from .logo_pulse import LogoPulseController
 from .models import Track
+from .projector_preview import ProjectorPreview
 from .search_dialog import SearchDialog
 
 
@@ -49,12 +52,15 @@ class MainWindow(QMainWindow):
 
         self._search_dialog: SearchDialog | None = None
         self._karaoke_window: KaraokeWindow | None = None
+        self._logo_pulse: LogoPulseController | None = None
         self._manual_crossfade = False
         self._transition_active = False
         self._pending_transition: tuple[str, str] | None = None
         self._transition_from = self._CROSSFADER_MAX // 2
         self._transition_to = self._CROSSFADER_MAX // 2
         self._transition_started = 0.0
+        self._transition_hold_started: float | None = None
+        self._transition_hold_source_ms = 0
         self._transition_duration = 8.0
         self._transition_beat_matched = False
         self._transition_total_beats = 0
@@ -94,24 +100,29 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(16, 18, 16, 18)
         center_layout.setSpacing(14)
+        center_controls = QWidget()
+        center_controls.setObjectName("CenterControls")
+        controls_layout = QVBoxLayout(center_controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(10)
         mix_title = QLabel("MIX BUS")
         mix_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         mix_title.setStyleSheet("font-size:15pt;font-weight:900;letter-spacing:2px;")
-        center_layout.addWidget(mix_title)
+        controls_layout.addWidget(mix_title)
 
         self.auto_mix = QCheckBox("AUTO MIX")
         self.auto_mix.setChecked(True)
         self.auto_mix.setToolTip(
             "Start the opposite deck near the end of the track; Beat Match prepares it earlier."
         )
-        center_layout.addWidget(self.auto_mix)
+        controls_layout.addWidget(self.auto_mix)
 
         self.beat_match = QCheckBox("BEAT MATCH")
         self.beat_match.setChecked(True)
         self.beat_match.setToolTip(
             "Silently analyze and align the incoming deck; fall back to a timed mix when needed."
         )
-        center_layout.addWidget(self.beat_match)
+        controls_layout.addWidget(self.beat_match)
 
         self.fade_label = QLabel("FADE SECONDS")
         self.fade_label.setObjectName("Subtle")
@@ -119,8 +130,8 @@ class MainWindow(QMainWindow):
         self.fade_seconds.setRange(2, 10)
         self.fade_seconds.setValue(8)
         self.fade_seconds.setToolTip("Fade duration for timed mode and beat-analysis fallback.")
-        center_layout.addWidget(self.fade_label)
-        center_layout.addWidget(self.fade_seconds)
+        controls_layout.addWidget(self.fade_label)
+        controls_layout.addWidget(self.fade_seconds)
 
         self.fade_bars_label = QLabel("FADE BARS")
         self.fade_bars_label.setObjectName("Subtle")
@@ -129,14 +140,14 @@ class MainWindow(QMainWindow):
         self.fade_bars.setValue(4)
         self.fade_bars.setSuffix(" bars")
         self.fade_bars.setToolTip("Four beats per bar; Beat Match follows the outgoing deck.")
-        center_layout.addWidget(self.fade_bars_label)
-        center_layout.addWidget(self.fade_bars)
+        controls_layout.addWidget(self.fade_bars_label)
+        controls_layout.addWidget(self.fade_bars)
 
         self.status = QLabel("AUTOMIX ARMED")
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status.setWordWrap(True)
         self.status.setStyleSheet("padding:12px;background:#0c111a;border-radius:10px;font-weight:800;")
-        center_layout.addWidget(self.status)
+        controls_layout.addWidget(self.status)
 
         self.karaoke_remote = karaoke_remote = QFrame()
         karaoke_remote.setObjectName("KaraokeRemote")
@@ -204,8 +215,18 @@ class MainWindow(QMainWindow):
         self.karaoke_playlist.setMaximumHeight(120)
         self.karaoke_playlist.setToolTip("Double-click a track to play it in Karaoke")
         karaoke_remote_layout.addWidget(self.karaoke_playlist)
-        center_layout.addWidget(karaoke_remote)
-        center_layout.addStretch(1)
+        controls_layout.addWidget(karaoke_remote)
+        controls_layout.addStretch(1)
+        controls_scroll = QScrollArea()
+        controls_scroll.setObjectName("CenterControlsScroll")
+        controls_scroll.viewport().setObjectName("CenterControlsViewport")
+        controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        controls_scroll.setWidget(center_controls)
+        center_layout.addWidget(controls_scroll, 1)
+        self.projector_preview = ProjectorPreview()
+        center_layout.addWidget(self.projector_preview)
 
         left_marker = QLabel("LEFT")
         right_marker = QLabel("RIGHT")
@@ -249,6 +270,8 @@ class MainWindow(QMainWindow):
         self.right.playbackStarted.connect(self._deck_started)
         self.left.playlistChanged.connect(self._save_playlists)
         self.right.playlistChanged.connect(self._save_playlists)
+        self.left.play_on_double_click.toggled.connect(self._save_playlists)
+        self.right.play_on_double_click.toggled.connect(self._save_playlists)
         self.left.moveTrackRequested.connect(self._move_track)
         self.right.moveTrackRequested.connect(self._move_track)
         self.crossfader.valueChanged.connect(self._apply_crossfader)
@@ -318,6 +341,7 @@ class MainWindow(QMainWindow):
     def _get_karaoke_window(self) -> KaraokeWindow:
         if self._karaoke_window is None:
             self._karaoke_window = KaraokeWindow(self)
+            self.projector_preview.set_source(self._karaoke_window.projector.video)
             self._karaoke_window.volume.setValue(self.karaoke_volume.value())
             self._karaoke_window.volume.valueChanged.connect(self._sync_karaoke_volume)
             self._karaoke_window.queueChanged.connect(self._sync_karaoke_playlist)
@@ -325,6 +349,9 @@ class MainWindow(QMainWindow):
                 self._sync_karaoke_projector_button
             )
             self._karaoke_window.engine.stateChanged.connect(self._sync_karaoke_playback)
+            self._logo_pulse = LogoPulseController(
+                (self.left.engine, self.right.engine), self._karaoke_window.projector.video, self
+            )
             self._sync_karaoke_playlist()
         return self._karaoke_window
 
@@ -552,13 +579,16 @@ class MainWindow(QMainWindow):
     def _beat_analysis_tick(self) -> None:
         if not self._pending_transition:
             return
-        if self._beat_analysis_started <= 0:
-            if time.monotonic() - self._beat_analysis_requested >= 12.0:
-                self._cancel_transition("INCOMING DECK COULD NOT START")
-            return
         from_side, to_side = self._pending_transition
         source = self.left if from_side == "left" else self.right
         target = self.left if to_side == "left" else self.right
+        if self._beat_analysis_started <= 0:
+            if target.engine.is_preparing():
+                self._beat_analysis_requested = time.monotonic()
+                return
+            if time.monotonic() - self._beat_analysis_requested >= 12.0:
+                self._cancel_transition("INCOMING DECK COULD NOT START")
+            return
         source_info = source.engine.beat_info()
         target_info = target.engine.beat_info()
         elapsed = time.monotonic() - self._beat_analysis_started
@@ -626,7 +656,7 @@ class MainWindow(QMainWindow):
             return
         from_side, to_side = self._pending_transition
         target = self.left if to_side == "left" else self.right
-        self._beat_phase_settling = self._transition_beat_matched
+        self._beat_phase_settling = True
         self._beat_launch_in_progress = True
         try:
             target.engine.play()
@@ -636,13 +666,7 @@ class MainWindow(QMainWindow):
             self.status.setText("TEMPO LOCKED - SETTLING PHASE")
             self._beat_settle_timer.start(180)
             return
-        target.engine.set_analysis_muted(False)
-        self._begin_transition(
-            from_side,
-            to_side,
-            duration=self._transition_duration,
-            beat_matched=self._transition_beat_matched,
-        )
+        self._beat_mix_start_timer.start(0)
 
     def _settle_beat_transition(self) -> None:
         if not self._pending_transition:
@@ -650,18 +674,19 @@ class MainWindow(QMainWindow):
         from_side, to_side = self._pending_transition
         source = self.left if from_side == "left" else self.right
         target = self.left if to_side == "left" else self.right
+        if not self._incoming_deck_ready(to_side):
+            self._beat_settle_timer.start(50)
+            return
         source_info = source.engine.beat_info()
         target_info = target.engine.beat_info()
         if source_info is None or target_info is None or self._transition_target_grid_bpm <= 0:
-            self._beat_phase_settling = False
             self._transition_beat_matched = False
             self._transition_total_beats = 0
             target.engine.set_playback_rate(1.0)
             target.engine.seek_ms(0)
-            target.engine.set_analysis_muted(False)
             self.status.setText("PHASE LOCK LOST - TIMED MIX")
             self._transition_duration = float(self.fade_seconds.value())
-            self._begin_transition(from_side, to_side, duration=self._transition_duration)
+            self._beat_mix_start_timer.start(50)
             return
 
         source_position, _source_duration = source.engine.current_times()
@@ -694,14 +719,21 @@ class MainWindow(QMainWindow):
             return
         from_side, to_side = self._pending_transition
         target = self.left if to_side == "left" else self.right
+        if not self._incoming_deck_ready(to_side):
+            self._beat_mix_start_timer.start(50)
+            return
         self._beat_phase_settling = False
         target.engine.set_analysis_muted(False)
         self._begin_transition(
             from_side,
             to_side,
             duration=self._transition_duration,
-            beat_matched=True,
+            beat_matched=self._transition_beat_matched,
         )
+
+    def _incoming_deck_ready(self, side: str) -> bool:
+        target = self.left if side == "left" else self.right
+        return target.engine.is_playing() and target.engine.has_playback_progress()
 
     def _begin_transition(
         self,
@@ -716,8 +748,8 @@ class MainWindow(QMainWindow):
             0.5, duration if duration is not None else float(self.fade_seconds.value())
         )
         self._transition_beat_matched = beat_matched
-        self._transition_source_side = from_side if beat_matched else None
-        self._transition_target_side = to_side if beat_matched else None
+        self._transition_source_side = from_side
+        self._transition_target_side = to_side
         self._transition_last_reported_beat = -1
         if beat_matched:
             source = self.left if from_side == "left" else self.right
@@ -742,13 +774,41 @@ class MainWindow(QMainWindow):
         self._transition_from = self.crossfader.value()
         self._transition_to = self._CROSSFADER_MAX if to_side == "right" else 0
         self._transition_started = time.monotonic()
+        self._transition_hold_started = None
+        self._transition_hold_source_ms = 0
         label = "BEAT MIX" if beat_matched else "AUTOMIX"
         self.status.setText(f"{label} {from_side.upper()} → {to_side.upper()}")
         self._fade_timer.start()
 
     def _fade_tick(self) -> None:
+        if not self._transition_active:
+            return
+        now = time.monotonic()
+        if self._transition_target_side is not None:
+            source = self.left if self._transition_source_side == "left" else self.right
+            source_position, _duration_ms = source.engine.current_times()
+            if not self._incoming_deck_ready(self._transition_target_side):
+                if self._transition_hold_started is None:
+                    self._transition_hold_started = now
+                    self._transition_hold_source_ms = source_position
+                self.status.setText("MIX HELD - WAITING FOR INCOMING AUDIO")
+                return
+            if self._transition_hold_started is not None:
+                # Resume at the existing gains; neither elapsed wall time nor
+                # outgoing beats during buffering may jump the fade forward.
+                self._transition_started += now - self._transition_hold_started
+                self._transition_source_start_ms += max(
+                    0, source_position - self._transition_hold_source_ms
+                )
+                self._transition_hold_started = None
+                self._transition_last_reported_beat = -1
+                label = "BEAT MIX" if self._transition_beat_matched else "AUTOMIX"
+                self.status.setText(
+                    f"{label} {self._transition_source_side.upper()} → "
+                    f"{self._transition_target_side.upper()}"
+                )
         duration = self._transition_duration
-        wall_progress = min(1.0, (time.monotonic() - self._transition_started) / duration)
+        wall_progress = min(1.0, (now - self._transition_started) / duration)
         progress = wall_progress
         eased = progress * progress * (3.0 - 2.0 * progress)
         if (
@@ -800,20 +860,11 @@ class MainWindow(QMainWindow):
             self._apply_crossfader(self._transition_to)
             self._transition_active = False
             if self._transition_beat_matched and self._transition_target_side is not None:
-                self._restore_original_tempo(self._transition_target_side)
+                # Retuning the sole audible deck can flush its audio buffers.
+                # The next load restores native speed before playback starts.
+                self.status.setText("BEAT MIX COMPLETE - TEMPO HELD")
             else:
                 self.status.setText("AUTOMIX COMPLETE")
-
-    def _restore_original_tempo(self, side: str) -> None:
-        """Restore native speed once, on the final mix beat.
-
-        QMediaPlayer can underrun when setPlaybackRate() is called repeatedly.
-        Tempo is therefore fixed for the entire audible mix and reset with one
-        backend call only after the outgoing deck is fully silent.
-        """
-        deck = self.left if side == "left" else self.right
-        deck.engine.set_playback_rate(1.0)
-        self.status.setText("BEAT MIX COMPLETE - ORIGINAL BPM")
 
     def _measure_phase_error(self) -> float:
         if (
@@ -876,6 +927,8 @@ class MainWindow(QMainWindow):
         self._beat_analysis_requested = 0.0
         self._beat_phase_settling = False
         self._transition_active = False
+        self._transition_hold_started = None
+        self._transition_hold_source_ms = 0
         self._transition_beat_matched = False
         self._transition_source_side = None
         self._transition_target_side = None
@@ -895,6 +948,10 @@ class MainWindow(QMainWindow):
         data = {
             "left": [track.to_dict() for track in self.left.tracks],
             "right": [track.to_dict() for track in self.right.tracks],
+            "play_on_double_click": {
+                "left": self.left.play_on_double_click.isChecked(),
+                "right": self.right.play_on_double_click.isChecked(),
+            },
             # Keep the persisted value in the original 0-100 format.
             "crossfader": round(self.crossfader.value() / self._CROSSFADER_MAX * 100),
             "auto_mix": self.auto_mix.isChecked(),
@@ -913,6 +970,13 @@ class MainWindow(QMainWindow):
         except (OSError, json.JSONDecodeError):
             return
         try:
+            double_click = data.get("play_on_double_click", {})
+            if not isinstance(double_click, dict):
+                double_click = {}
+            # Restore both settings without writing a partially restored session.
+            with QSignalBlocker(self.left.play_on_double_click), QSignalBlocker(self.right.play_on_double_click):
+                self.left.play_on_double_click.setChecked(double_click.get("left") is True)
+                self.right.play_on_double_click.setChecked(double_click.get("right") is True)
             self.left.set_tracks([Track.from_dict(item) for item in data.get("left", [])])
             self.right.set_tracks([Track.from_dict(item) for item in data.get("right", [])])
             saved_crossfader = max(0, min(100, int(data.get("crossfader", 50))))
@@ -933,6 +997,8 @@ class MainWindow(QMainWindow):
             self._karaoke_window.engine.stop()
             self._karaoke_window.close()
         self._karaoke_blink_timer.stop()
+        if self._logo_pulse is not None:
+            self._logo_pulse.stop()
         self._save_playlists()
         self.left.engine.stop()
         self.right.engine.stop()

@@ -13,6 +13,14 @@ QFrame#TopBar, QFrame#CenterConsole, QFrame#DeckFrame, QFrame#ResultCard {
 }
 QFrame#LeftDeck { border: 1px solid #00d8ff; }
 QFrame#RightDeck { border: 1px solid #ff2fa7; }
+QScrollArea#CenterControlsScroll,
+QWidget#CenterControlsViewport,
+QWidget#CenterControls,
+QFrame#CenterConsole QLabel,
+QFrame#CenterConsole QCheckBox,
+QFrame#CenterConsole QSlider {
+    background: transparent;
+}
 QFrame#KaraokeRemote {
     background: #111722;
     border: 3px solid #263247;

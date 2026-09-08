@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -60,6 +61,10 @@ class BeatTransitionTest(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self) -> None:
+        for method in ("_load_playlists", "_save_playlists"):
+            patcher = patch.object(MainWindow, method, new=lambda self: None)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.main = MainWindow()
         self.source = self.main.left.engine
         self.target = self.main.right.engine
@@ -69,6 +74,8 @@ class BeatTransitionTest(unittest.TestCase):
         self.target.set_playback_rate = lambda value: self.calls.append(("rate", value))
         self.target.set_analysis_muted = lambda value: self.calls.append(("mute", value))
         self.target.is_playing = lambda: True
+        self.target.is_preparing = lambda: False
+        self.target.has_playback_progress = lambda: True
         def play_target() -> None:
             self.calls.append(("play", True))
             # Exercise backends that report PlayingState before play() returns.
@@ -129,7 +136,7 @@ class BeatTransitionTest(unittest.TestCase):
         self.assertIn("BEAT 2/16", self.main.status.text())
         self.assertFalse(any(name == "rate" for name, _value in self.calls))
 
-    def test_incoming_deck_returns_to_original_bpm_after_mix(self) -> None:
+    def test_incoming_deck_keeps_matched_tempo_after_mix(self) -> None:
         self.source.beat_info = lambda: BeatInfo(120.0, 0, 0.9)
         self.target.beat_info = lambda: BeatInfo(100.0, 0, 0.9)
         self.main._beat_analysis_tick()
@@ -140,12 +147,82 @@ class BeatTransitionTest(unittest.TestCase):
         self.main._beat_mix_start_timer.stop()
         self.main._start_aligned_transition()
 
+        self.calls.clear()
         self.source.current_times = lambda: (10_000, 180_000)
         self.main._fade_tick()
 
-        self.assertIn(("rate", 1.0), self.calls)
-        self.assertEqual(self.calls.count(("rate", 1.0)), 1)
-        self.assertIn("ORIGINAL BPM", self.main.status.text())
+        self.assertFalse(any(name == "rate" for name, _value in self.calls))
+        self.assertEqual(self.main.crossfader.value(), self.main._CROSSFADER_MAX)
+        self.assertIn("TEMPO HELD", self.main.status.text())
+
+    def test_preparing_incoming_media_does_not_expire_analysis_start(self) -> None:
+        self.main._beat_analysis_started = 0.0
+        self.main._beat_analysis_requested = 100.0
+        self.target.is_preparing = lambda: True
+        with patch("app.main_window.time.monotonic", return_value=120.0):
+            self.main._beat_analysis_tick()
+        self.assertEqual(self.main._pending_transition, ("left", "right"))
+        self.target.is_preparing = lambda: False
+        with patch("app.main_window.time.monotonic", return_value=125.0):
+            self.main._beat_analysis_tick()
+        self.assertEqual(self.main._pending_transition, ("left", "right"))
+        with patch("app.main_window.time.monotonic", return_value=132.0):
+            self.main._beat_analysis_tick()
+        self.assertIsNone(self.main._pending_transition)
+
+    def test_aligned_transition_waits_for_audio_after_seek(self) -> None:
+        self.main._transition_beat_matched = True
+        self.main._beat_phase_settling = True
+        self.target.has_playback_progress = lambda: False
+        self.main._start_aligned_transition()
+        self.assertFalse(self.main._transition_active)
+        self.assertTrue(self.main._beat_phase_settling)
+        self.assertNotIn(("mute", False), self.calls)
+        self.assertTrue(self.main._beat_mix_start_timer.isActive())
+        self.main._beat_mix_start_timer.stop()
+        self.target.has_playback_progress = lambda: True
+        self.main._start_aligned_transition()
+        self.assertTrue(self.main._transition_active)
+        self.assertIn(("mute", False), self.calls)
+
+    def test_timed_mix_holds_gains_and_does_not_jump_after_buffering(self) -> None:
+        with patch("app.main_window.time.monotonic", return_value=100.0):
+            self.main._begin_transition("left", "right", duration=8.0)
+        with patch("app.main_window.time.monotonic", return_value=102.0):
+            self.main._fade_tick()
+            held_gain = self.main.crossfader.value()
+            self.target.has_playback_progress = lambda: False
+            self.main._fade_tick()
+        with patch("app.main_window.time.monotonic", return_value=110.0):
+            self.main._fade_tick()
+        self.assertEqual(self.main.crossfader.value(), held_gain)
+        self.assertTrue(self.main._transition_active)
+        self.assertIn("MIX HELD", self.main.status.text())
+        self.target.has_playback_progress = lambda: True
+        with patch("app.main_window.time.monotonic", return_value=111.0):
+            self.main._fade_tick()
+        self.assertEqual(self.main.crossfader.value(), held_gain)
+        with patch("app.main_window.time.monotonic", return_value=113.0):
+            self.main._fade_tick()
+        self.assertGreater(self.main.crossfader.value(), held_gain)
+
+    def test_beat_mix_holds_outgoing_gain_when_incoming_stops(self) -> None:
+        self.source.beat_info = lambda: BeatInfo(120.0, 0, 0.9)
+        self.main._transition_total_beats = 16
+        self.main._begin_transition("left", "right", duration=8.0, beat_matched=True)
+        self.source.current_times = lambda: (2_500, 180_000)
+        self.main._fade_tick()
+        held_gain = self.main.crossfader.value()
+        self.target.is_playing = lambda: False
+        self.main._fade_tick()
+        self.source.current_times = lambda: (4_500, 180_000)
+        self.main._fade_tick()
+        self.assertEqual(self.main.crossfader.value(), held_gain)
+        self.source.current_times = lambda: (5_000, 180_000)
+        self.target.is_playing = lambda: True
+        self.main._fade_tick()
+        self.assertEqual(self.main.crossfader.value(), held_gain)
+        self.assertTrue(self.main._transition_active)
 
     def test_beat_toggle_switches_duration_control(self) -> None:
         self.assertFalse(self.main.fade_bars.isHidden())

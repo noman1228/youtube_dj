@@ -9,13 +9,14 @@ from urllib.request import urlopen
 
 import yt_dlp
 
-from app.media import ResolveTask, _video_format_selector
+from app.media import PreparedMedia, ResolveTask, _prepared_cache, _video_format_selector
 from app.hls import HlsPlaylistServer, HlsVideoSource, select_hls_video
 from app.models import Track
 
 
 class MediaFormatTest(unittest.TestCase):
     def setUp(self) -> None:
+        _prepared_cache.clear()
         self.master = "https://example.invalid/master.m3u8"
         # Match the separate HLS renditions returned for AQOt75axc0Y,
         # including an audio rendition whose codec is not specified.
@@ -91,7 +92,7 @@ class MediaFormatTest(unittest.TestCase):
         result = self._process([audio, self.video], "bestaudio/best")
         self.assertEqual(result["url"], audio["url"])
 
-    def test_resolve_task_passes_master_url_and_duration_to_player(self) -> None:
+    def test_resolve_task_prepares_master_and_passes_local_asset_to_player(self) -> None:
         resolved = Mock()
         failed = Mock()
         task = ResolveTask(7, Track("Karaoke", "https://example.invalid/watch"), video=True)
@@ -109,18 +110,28 @@ class MediaFormatTest(unittest.TestCase):
             '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",DEFAULT=YES,URI="audio.m3u8"\n'
             '#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720,AUDIO="audio"\nvideo.m3u8\n'
         )
+        selected = []
+
+        def prepare(ydl, info, source, directory, cancelled):
+            selected.append(source)
+            path = directory / "master.m3u8"
+            path.write_bytes(b"#EXTM3U\n")
+            return path
+
         with patch.object(yt_dlp.YoutubeDL, "extract_info", extract), patch.object(
             yt_dlp.YoutubeDL, "urlopen", return_value=io.BytesIO(manifest.encode())
-        ):
+        ), patch("app.media.prepare_media", side_effect=prepare):
             task.run()
 
         failed.assert_not_called()
         resolved.assert_called_once()
         generation, track, source, duration, description = resolved.call_args.args
         self.assertEqual((generation, track, duration, description), (7, task.track, 217, "720P VIDEO + AUDIO"))
-        self.assertIsInstance(source, HlsVideoSource)
-        self.assertEqual(source.url, self.master)
-        self.assertEqual(source.playlist.count(b"#EXT-X-STREAM-INF:"), 1)
+        self.assertIsInstance(source, PreparedMedia)
+        self.assertTrue(source.path.is_file())
+        self.assertEqual(source.height, 720)
+        self.assertEqual(selected[0].url, self.master)
+        self.assertEqual(selected[0].playlist.count(b"#EXT-X-STREAM-INF:"), 1)
 
 
 class HlsSelectionTest(unittest.TestCase):
