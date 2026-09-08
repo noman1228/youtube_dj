@@ -47,7 +47,7 @@ class MediaFormatTest(unittest.TestCase):
         self.assertNotEqual(result["vcodec"], "none")
         self.assertEqual(self.video["url"], "https://example.invalid/video.m3u8")
 
-    def test_combined_720p_is_preferred_over_master_and_1080p(self) -> None:
+    def test_highest_resolution_combined_stream_is_selected(self) -> None:
         combined = {
             "format_id": "22", "url": "https://example.invalid/combined.mp4",
             "ext": "mp4", "height": 720, "vcodec": "avc1", "acodec": "mp4a",
@@ -55,7 +55,13 @@ class MediaFormatTest(unittest.TestCase):
         larger = {**combined, "format_id": "37", "height": 1080,
                   "url": "https://example.invalid/larger.mp4"}
         result = self._process([self.audio, self.video, combined, larger])
-        self.assertEqual(result["url"], combined["url"])
+        self.assertEqual(result["url"], larger["url"])
+
+    def test_higher_resolution_hls_beats_combined_stream(self) -> None:
+        combined = {**self.video, "format_id": "22", "protocol": "https",
+                    "acodec": "mp4a", "height": 720}
+        result = self._process([self.audio, combined, {**self.video, "height": 2160}])
+        self.assertEqual(result["format_id"], "hls-master")
 
     def test_combined_above_720p_is_allowed_when_it_is_the_only_combined_stream(self) -> None:
         combined = {**self.video, "format_id": "37", "protocol": "https",
@@ -132,18 +138,18 @@ class HlsSelectionTest(unittest.TestCase):
             f'CODECS="{codec},mp4a.40.2",AUDIO="{group}"\n{height}-{codec}.m3u8?signature=video\n'
         )
 
-    def test_only_720p_and_default_audio_survive_full_master(self) -> None:
+    def test_only_highest_resolution_and_default_audio_survive_full_master(self) -> None:
         manifest = self.header + "".join(self._variant(height) for height in (144, 240, 360, 480, 720, 1080))
         source = select_hls_video(manifest, self.url)
         text = source.playlist.decode()
-        self.assertEqual(source.height, 720)
+        self.assertEqual(source.height, 1080)
         self.assertEqual(text.count("#EXT-X-STREAM-INF:"), 1)
         self.assertEqual(text.count("#EXT-X-MEDIA:"), 1)
-        self.assertIn("RESOLUTION=1280x720", text)
+        self.assertIn("RESOLUTION=1920x1080", text)
         self.assertIn("#EXT-X-INDEPENDENT-SEGMENTS", text)
         self.assertIn("https://example.invalid/manifests/audio.m3u8?signature=audio", text)
-        self.assertIn("https://example.invalid/manifests/720-avc1.4D401F.m3u8?signature=video", text)
-        self.assertNotIn("1080-", text)
+        self.assertIn("https://example.invalid/manifests/1080-avc1.4D401F.m3u8?signature=video", text)
+        self.assertNotIn("720-", text)
         self.assertNotIn("240-", text)
         self.assertNotIn("other.m3u8", text)
 
@@ -156,9 +162,16 @@ class HlsSelectionTest(unittest.TestCase):
         source = select_hls_video(self.header + self._variant(240) + self._variant(480), self.url)
         self.assertEqual(source.height, 480)
 
-    def test_smallest_above_limit_is_used_when_all_variants_exceed_720p(self) -> None:
+    def test_4k_is_selected_when_available(self) -> None:
         source = select_hls_video(self.header + self._variant(1080) + self._variant(2160), self.url)
+        self.assertEqual(source.height, 2160)
+
+    def test_recovery_cap_steps_down_to_next_available_resolution(self) -> None:
+        manifest = self.header + "".join(self._variant(h) for h in (360, 720, 1080, 2160))
+        source = select_hls_video(manifest, self.url, max_height=2159)
         self.assertEqual(source.height, 1080)
+        self.assertEqual(source.master_playlist.decode(), manifest)
+        self.assertEqual(select_hls_video(manifest, self.url, max_height=100).height, 360)
 
     def test_video_without_matching_audio_is_not_selected(self) -> None:
         source = select_hls_video(self.header + self._variant(480) + self._variant(720, group="missing"), self.url)

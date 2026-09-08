@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, QObject, QRect, QThreadPool, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QBrush, QCloseEvent, QColor, QKeyEvent, QMouseEvent, QPainter
+from pathlib import Path
+
+from PySide6.QtCore import QByteArray, QEasingCurve, QObject, QRect, QThreadPool, QTimer, Qt, QUrl, QVariantAnimation, Signal, Slot
+from PySide6.QtGui import QBrush, QCloseEvent, QColor, QImage, QKeyEvent, QMouseEvent, QPainter
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtMultimedia import QVideoFrame, QVideoSink
 from PySide6.QtWidgets import (
@@ -36,7 +38,15 @@ class VideoDisplayWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._frame_image = None
+        self._idle_image = QImage(str(Path(__file__).resolve().parent.parent / "JMT-DJ.png"))
+        self._show_idle = True
+        self._idle_opacity = 1.0
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+
+    def set_idle(self, visible: bool) -> None:
+        self._show_idle = visible
+        self._idle_opacity = float(visible)
+        self.update()
 
     def set_image(self, image) -> None:
         self._frame_image = image if not image.isNull() else None
@@ -45,9 +55,18 @@ class VideoDisplayWidget(QWidget):
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor("#000000"))
-        if self._frame_image is None:
+        if self._idle_opacity < 1:
+            self._paint_image(painter, self._frame_image)
+        if self._idle_opacity > 0:
+            # Fade the old frame to black beneath transparent parts of the logo.
+            painter.setOpacity(self._idle_opacity)
+            painter.fillRect(self.rect(), QColor("#000000"))
+            self._paint_image(painter, self._idle_image)
+
+    def _paint_image(self, painter: QPainter, image: QImage | None) -> None:
+        if image is None or image.isNull():
             return
-        size = self._frame_image.size()
+        size = image.size()
         size.scale(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
         target = QRect(
             (self.width() - size.width()) // 2,
@@ -55,7 +74,8 @@ class VideoDisplayWidget(QWidget):
             size.width(),
             size.height(),
         )
-        painter.drawImage(target, self._frame_image)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawImage(target, image)
 
 
 class ProjectorVideoWidget(VideoDisplayWidget):
@@ -65,6 +85,27 @@ class ProjectorVideoWidget(VideoDisplayWidget):
         super().__init__(parent)
         self._artist = ""
         self._show_artist = True
+        self._idle_fade = QVariantAnimation(self)
+        self._idle_fade.setDuration(500)
+        self._idle_fade.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._idle_fade.valueChanged.connect(self._fade_changed)
+
+    def set_idle(self, visible: bool) -> None:
+        if visible == self._show_idle:
+            return
+        self._idle_fade.stop()
+        self._show_idle = visible
+        if visible:
+            self._idle_fade.setStartValue(self._idle_opacity)
+            self._idle_fade.setEndValue(1.0)
+            self._idle_fade.start()
+        else:
+            self._idle_opacity = 0.0
+            self.update()
+
+    def _fade_changed(self, value: object) -> None:
+        self._idle_opacity = float(value)
+        self.update()
 
     def set_artist(self, artist: str, visible: bool) -> None:
         self._artist = artist.strip()
@@ -73,9 +114,10 @@ class ProjectorVideoWidget(VideoDisplayWidget):
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
-        if not self._show_artist or not self._artist:
+        if self._idle_opacity >= 1 or not self._show_artist or not self._artist:
             return
         painter = QPainter(self)
+        painter.setOpacity(1.0 - self._idle_opacity)
         overlay_height = max(70, self.height() // 7)
         overlay = QRect(0, self.height() - overlay_height, self.width(), overlay_height)
         painter.fillRect(overlay, QColor(0, 0, 0, 180))
@@ -105,6 +147,8 @@ class MirroredVideoRouter(QObject):
     @Slot(QVideoFrame)
     def _frame_changed(self, frame: QVideoFrame) -> None:
         image = frame.toImage()
+        if image.isNull():
+            return  # Retain the last frame while the projector fades to idle.
         for display in self.displays:
             display.set_image(image)
 
@@ -188,6 +232,11 @@ class KaraokeWindow(QDialog):
         self.projector = ProjectorWindow(self)
         self.projector.closed.connect(self._projector_closed)
         self.video_router = MirroredVideoRouter([self.video, self.projector.video], self)
+        self._pause_image_timer = QTimer(self)
+        self._pause_image_timer.setSingleShot(True)
+        self._pause_image_timer.setInterval(5000)
+        self._pause_image_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._pause_image_timer.timeout.connect(lambda: self._show_idle_image(True))
         self.engine.set_video_sink(self.video_router.sink)
         self.engine.stateChanged.connect(self._set_state)
         self.engine.positionChanged.connect(self._position_changed)
@@ -543,6 +592,8 @@ class KaraokeWindow(QDialog):
         return False
 
     def _ended(self) -> None:
+        self._pause_image_timer.stop()
+        self._show_idle_image(True)
         if 0 <= self.current_index < len(self.tracks):
             self.tracks[self.current_index].played = True
             self._refresh_items()
@@ -610,6 +661,16 @@ class KaraokeWindow(QDialog):
     def _set_state(self, state: str) -> None:
         self.state_label.setText(state)
         self.state_label.setToolTip(state)
+        if state == "PAUSED":
+            if not self._pause_image_timer.isActive():
+                self._pause_image_timer.start()
+        else:
+            self._pause_image_timer.stop()
+            self._show_idle_image(not self.engine.is_playing())
+
+    def _show_idle_image(self, visible: bool) -> None:
+        for display in self.video_router.displays:
+            display.set_idle(visible)
 
     def open_projector(self) -> None:
         self._update_projector_artist()

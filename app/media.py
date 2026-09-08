@@ -26,11 +26,12 @@ class ResolveSignals(QObject):
 
 
 class ResolveTask(QRunnable):
-    def __init__(self, generation: int, track: Track, video: bool = False) -> None:
+    def __init__(self, generation: int, track: Track, video: bool = False, max_height: int | None = None) -> None:
         super().__init__()
         self.generation = generation
         self.track = track
         self.video = video
+        self.max_height = max_height
         self.signals = ResolveSignals()
 
     @Slot()
@@ -54,7 +55,7 @@ class ResolveTask(QRunnable):
                 "skip_download": True,
                 "noplaylist": True,
                 "format": (
-                    _video_format_selector if self.video else "bestaudio/best"
+                    (lambda context: _video_format_selector(context, self.max_height)) if self.video else "bestaudio/best"
                 ),
                 "socket_timeout": 20,
                 # yt-dlp enables only Deno by default; support the Node.js
@@ -69,7 +70,7 @@ class ResolveTask(QRunnable):
                         manifest = response.read(1_048_577)
                     if len(manifest) > 1_048_576:
                         raise RuntimeError("The HLS playlist is too large to open safely.")
-                    hls_source = select_hls_video(manifest.decode("utf-8-sig"), info["url"])
+                    hls_source = select_hls_video(manifest.decode("utf-8-sig"), info["url"], self.max_height)
             if not info:
                 raise RuntimeError("No playable stream information was returned.")
             stream_url = info.get("url") or _best_stream_url(
@@ -97,9 +98,9 @@ class ResolveTask(QRunnable):
             pass  # The owning window was closed while resolution was in flight.
 
 
-def _video_format_selector(context: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    # yt-dlp supplies sanitized formats ordered from worst to best. Keep the
-    # original preference for a single combined stream at up to 720p.
+def _video_format_selector(context: dict[str, Any], max_height: int | None = None) -> Iterator[dict[str, Any]]:
+    # Rank playable combined streams and shared HLS masters together so a
+    # low-resolution combined stream cannot hide a higher-quality HLS video.
     formats = [
         fmt for fmt in context.get("formats") or []
         if fmt.get("url") and not fmt.get("has_drm")
@@ -109,11 +110,6 @@ def _video_format_selector(context: dict[str, Any]) -> Iterator[dict[str, Any]]:
         if fmt.get("vcodec") not in {None, "none"}
         and fmt.get("acodec") not in {None, "none"}
     ]
-    if combined:
-        preferred = [fmt for fmt in combined if 0 < (fmt.get("height") or 0) <= 720]
-        yield (preferred or combined)[-1]
-        return
-
     # YouTube may expose only separate audio/video renditions. Their shared
     # HLS master links both; a video-only child URL would produce silent video.
     # Resolution will narrow that master to one HD rendition before opening it.
@@ -126,7 +122,24 @@ def _video_format_selector(context: dict[str, Any]) -> Iterator[dict[str, Any]]:
         fmt["manifest_url"] for fmt in hls_formats
         if fmt.get("vcodec") == "none" and fmt.get("acodec") != "none"
     }
-    for fmt in reversed(hls_formats):
+    candidates = combined + [
+        fmt for fmt in hls_formats
+        if fmt.get("vcodec") not in {None, "none"}
+        and fmt["manifest_url"] in audio_masters
+    ]
+    candidates.sort(key=lambda fmt: (
+        fmt.get("height") or 0, fmt.get("fps") or 0, fmt.get("tbr") or 0,
+    ), reverse=True)
+    if max_height is not None and candidates:
+        preferred = [fmt for fmt in candidates if 0 < (fmt.get("height") or 0) <= max_height]
+        if not preferred:
+            lowest = min(fmt.get("height") or 0 for fmt in candidates)
+            preferred = [fmt for fmt in candidates if (fmt.get("height") or 0) == lowest]
+        candidates = preferred
+    for fmt in candidates:
+        if fmt in combined:
+            yield fmt
+            return
         if (
             fmt.get("vcodec") not in {None, "none"}
             and fmt["manifest_url"] in audio_masters
@@ -308,6 +321,8 @@ class QtMediaDeckEngine(QObject):
         self._last_position_ms = 0
         self._playlist_server: HlsPlaylistServer | None = None
         self._video_height = 0
+        self._video_max_height: int | None = None
+        self._hls_source: HlsVideoSource | None = None
         self._last_audio_analysis_ms = -self._AUDIO_ANALYSIS_INTERVAL_MS
         self._beat_tracker = BeatTracker()
 
@@ -366,6 +381,9 @@ class QtMediaDeckEngine(QObject):
 
     def load(self, track: Track, autoplay: bool = False) -> None:
         self.stop()
+        self._video_max_height = None
+        self._video_height = 0
+        self._hls_source = None
         self._player.setPlaybackRate(1.0)
         self._beat_tracker.reset()
         self._retry_attempt = 0
@@ -388,7 +406,7 @@ class QtMediaDeckEngine(QObject):
         self._autoplay_after_resolve = autoplay
         self._stream_info = "VIDEO STREAM" if self._video else "AUDIO STREAM"
         self.stateChanged.emit("RESOLVING")
-        task = ResolveTask(self._generation, track, video=self._video)
+        task = ResolveTask(self._generation, track, video=self._video, max_height=self._video_max_height)
         self._resolve_tasks[self._generation] = task
         task.signals.resolved.connect(self._resolved)
         task.signals.failed.connect(self._resolve_failed)
@@ -410,6 +428,7 @@ class QtMediaDeckEngine(QObject):
         self._ready = True
         self._retry_pending = False
         self._video_height = 0
+        self._hls_source = stream_url if isinstance(stream_url, HlsVideoSource) else None
         if isinstance(stream_url, HlsVideoSource):
             self._video_height = stream_url.height
             if self._playlist_server is None:
@@ -620,6 +639,10 @@ class QtMediaDeckEngine(QObject):
     def _metadata_changed(self) -> None:
         try:
             metadata = self._player.metaData()
+            if self._video and not self._video_height:
+                resolution = _safe_metadata_value(metadata, QMediaMetaData.Key.Resolution)
+                if resolution is not None and hasattr(resolution, "height"):
+                    self._video_height = resolution.height()
             bitrate = _safe_metadata_value(metadata, QMediaMetaData.Key.AudioBitRate)
             codec = _safe_metadata_value(metadata, QMediaMetaData.Key.AudioCodec)
             container = _safe_metadata_value(metadata, QMediaMetaData.Key.FileFormat)
@@ -686,14 +709,16 @@ class QtMediaDeckEngine(QObject):
             and not self._resolving
             and not self._failure_reported
         ):
-            self._stall_timer.start()
+            # Allow initial startup time, but react sooner to mid-song buffering.
+            timeout = 5000 if self._video and self._last_position_ms > 0 else self._STREAM_STALL_TIMEOUT_MS
+            self._stall_timer.start(timeout)
 
     @Slot()
     def _stream_timed_out(self) -> None:
         if self._play_requested and self._ready and self._is_remote_track():
             self._schedule_stream_retry(
                 "The stream made no playback progress for "
-                f"{self._STREAM_STALL_TIMEOUT_MS // 1000} seconds."
+                f"{self._stall_timer.interval() // 1000} seconds."
             )
 
     @Slot(QMediaPlayer.Error, str)
@@ -725,6 +750,8 @@ class QtMediaDeckEngine(QObject):
             return
 
         self._retry_attempt += 1
+        if self._video and self._video_height > 0:
+            self._video_max_height = max(1, self._video_height - 1)
         self._retry_pending = True
         self._retry_position_ms = max(
             self._retry_position_ms, self._player.position(), self._last_position_ms
@@ -758,6 +785,17 @@ class QtMediaDeckEngine(QObject):
     def _retry_stream(self) -> None:
         if not self._retry_pending or not self._track:
             return
+        if self._video_max_height is not None and self._hls_source and self._hls_source.master_playlist:
+            source = select_hls_video(
+                self._hls_source.master_playlist.decode("utf-8"),
+                self._hls_source.url, self._video_max_height,
+            )
+            if source.height < self._video_height:
+                # Reuse the already resolved master for a quick quality change.
+                self._autoplay_after_resolve = self._play_requested
+                self._resolved(self._generation, self._track, source,
+                               self._resolved_duration_ms // 1000, f"{source.height}P VIDEO + AUDIO")
+                return
         self._begin_resolve(self._track, autoplay=self._play_requested)
 
     @Slot(QMediaPlayer.MediaStatus)

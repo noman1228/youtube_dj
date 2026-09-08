@@ -13,6 +13,7 @@ class HlsVideoSource:
     url: str
     playlist: bytes
     height: int
+    master_playlist: bytes = b""
 
 
 class HlsPlaylistServer:
@@ -79,7 +80,7 @@ def _absolute_uris(line: str, base_url: str) -> str:
     )
 
 
-def select_hls_video(text: str, url: str, max_height: int = 720) -> HlsVideoSource:
+def select_hls_video(text: str, url: str, max_height: int | None = None) -> HlsVideoSource:
     """Keep one video rendition and its audio, avoiding probes of every quality."""
     lines = [line.strip() for line in text.lstrip("\ufeff").splitlines() if line.strip()]
     if not lines or lines[0] != "#EXTM3U":
@@ -114,12 +115,13 @@ def select_hls_video(text: str, url: str, max_height: int = 720) -> HlsVideoSour
     if not variants:
         raise RuntimeError("No compatible HLS video/audio rendition was found.")
 
-    preferred = [variant for variant in variants if variant[0] <= max_height]
+    preferred = [variant for variant in variants if max_height is None or variant[0] <= max_height]
     if not preferred:
         smallest = min(variant[0] for variant in variants)
         preferred = [variant for variant in variants if variant[0] == smallest]
     selected = max(preferred, key=lambda variant: (
         variant[0],
+        float(variant[1].get("FRAME-RATE", "0")),
         "avc1" in variant[1].get("CODECS", ""),
         int(variant[1].get("BANDWIDTH", "0")),
     ))
@@ -137,4 +139,4 @@ def select_hls_video(text: str, url: str, max_height: int = 720) -> HlsVideoSour
         and fields.get("GROUP-ID") == attributes.get("SUBTITLES")
     )
     result.extend((tag, urljoin(url, video_url)))
-    return HlsVideoSource(url, ("\n".join(result) + "\n").encode("utf-8"), height)
+    return HlsVideoSource(url, ("\n".join(result) + "\n").encode("utf-8"), height, text.encode("utf-8"))

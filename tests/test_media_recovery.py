@@ -39,6 +39,33 @@ class MediaRecoveryTest(unittest.TestCase):
         if self.engine._playlist_server:
             self.engine._playlist_server.close()
 
+    def test_karaoke_failure_steps_down_without_resolving_again(self) -> None:
+        from app.hls import select_hls_video
+        manifest = ('#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="audio.m3u8"\n'
+                    '#EXT-X-STREAM-INF:RESOLUTION=1920x1080,AUDIO="a"\nhigh.m3u8\n'
+                    '#EXT-X-STREAM-INF:RESOLUTION=1280x720,AUDIO="a"\nlow.m3u8\n')
+        engine = self.engine
+        engine._video = True
+        engine._video_height = 1080
+        engine._hls_source = select_hls_video(manifest, 'https://example.invalid/master.m3u8')
+        engine._play_requested = True
+        engine._player.position.return_value = 12345
+        engine._player_error(QMediaPlayer.Error.NetworkError, 'buffer failure')
+        self.assertEqual(engine._video_max_height, 1079)
+        with patch.object(engine, '_begin_resolve') as resolve:
+            engine._retry_stream()
+        resolve.assert_not_called()
+        self.assertEqual(engine._video_height, 720)
+        self.assertEqual(engine._retry_position_ms, 12345)
+        engine._resume_after_reconnect(QMediaPlayer.MediaStatus.LoadedMedia)
+        engine._player.setPosition.assert_called_with(12345)
+
+    def test_new_karaoke_track_starts_uncapped(self) -> None:
+        self.engine._video_max_height = 719
+        with patch.object(self.engine, '_begin_resolve'):
+            self.engine.load(self.engine._track)
+        self.assertIsNone(self.engine._video_max_height)
+
     def test_network_error_schedules_only_one_reconnect(self) -> None:
         states: list[str] = []
         errors: list[str] = []
