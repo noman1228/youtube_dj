@@ -16,6 +16,7 @@ if not exist .venv (
 call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt || goto :error
+python -m pip install --upgrade "yt-dlp[default]" || goto :error
 python main.py
 goto :eof
 

@@ -20,7 +20,7 @@ A working first-phase desktop DJ application with:
 ## Windows requirements
 
 1. **Python 3.11 or newer, 64-bit**
-2. A current JavaScript runtime is strongly recommended for current YouTube extraction. Node.js 22+ or Deno 2.3+ are suitable for current yt-dlp releases.
+2. A supported JavaScript runtime on `PATH` for full YouTube support: **Deno 2.3+** (recommended) or **Node.js 22+**. EncoreMix enables both runtimes. See [yt-dlp's runtime setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS) for installation instructions.
 3. Internet access
 
 ## Fast start
@@ -31,7 +31,9 @@ Double-click:
 run_windows.bat
 ```
 
-The script creates a local `.venv`, installs the packages, and launches the application.
+The script creates a local `.venv`, installs the packages, updates `yt-dlp` and its
+matching YouTube challenge scripts, and launches the application. Other packages
+are updated only when needed to satisfy `requirements.txt`.
 
 Manual launch:
 
@@ -40,6 +42,7 @@ cd youtube_dj
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+python -m pip install --upgrade "yt-dlp[default]"
 python main.py
 ```
 
@@ -52,10 +55,18 @@ Close EncoreMix, then run the standalone updater from the project folder:
 ```
 
 The updater checks the canonical source repository, installs only fast-forward
-updates, and refreshes the packages in `requirements.txt`. It stops without
+updates, installs the packages in `requirements.txt`, and upgrades `yt-dlp` with
+its matching YouTube challenge scripts. It stops without
 changing anything when the checkout contains local changes. To check without
 installing, use `updater.py --check`; to leave installed packages alone, use
 `updater.py --skip-dependencies`.
+
+When setting up a laptop, use the same application source and let
+`run_windows.bat` create a separate `.venv` on that machine. Install a supported
+runtime there too; having it on the desktop does not make it available on the
+laptop. Reopen the launcher after installing a runtime so it receives the new
+`PATH`. If YouTube tracks stop early or fail to start, run `run_windows.bat` again
+to refresh the extractor and challenge scripts before retrying.
 
 ## How to use
 
@@ -88,12 +99,14 @@ If either deck does not produce a confident beat estimate, Auto Mix safely falls
 ## Important implementation notes
 
 - YouTube stream URLs expire. The application resolves a fresh audio URL whenever a track is loaded.
-- If a remote stream socket drops, playback safely re-resolves the URL and retries up to three times instead of advancing the queue or flooding the UI with errors.
+- Auto Mix uses the full duration resolved by `yt-dlp`; temporary Qt/FFmpeg segment durations cannot trigger an early transition.
+- Waveform and beat metering are sampled at a bounded rate to keep dual-deck playback responsive on lower-power systems.
+- If a remote stream socket drops, ends before the known song duration, or makes no playback progress for 20 seconds, playback re-resolves the URL and retries up to three times from the interrupted position. A failed stream does not advance the queue; Pause and Stop cancel the playback timeout.
 - YouTube Music search uses `ytmusicapi`, an unofficial client. Normal public search does not require account authentication.
 - Streaming availability can change because YouTube changes its site frequently. Keep `yt-dlp` current:
 
 ```powershell
-python -m pip install --upgrade yt-dlp
+.\.venv\Scripts\python.exe -m pip install --upgrade "yt-dlp[default]"
 ```
 
 ## Next phase

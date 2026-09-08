@@ -39,6 +39,7 @@ from .search_dialog import SearchDialog
 
 class MainWindow(QMainWindow):
     _CROSSFADER_MAX = 1000
+    _AUTOMIX_MIN_PLAYED_MS = 5_000
 
     def __init__(self) -> None:
         super().__init__()
@@ -468,6 +469,8 @@ class MainWindow(QMainWindow):
         if self.right.engine.is_playing() and value >= self._CROSSFADER_MAX * 0.45:
             candidates.append(("right", self.right.current_remaining_ms()))
         for side, remaining in candidates:
+            if remaining is None:
+                continue
             trigger_ms = 10_000
             if self.beat_match.isChecked():
                 source = self.left if side == "left" else self.right
@@ -477,7 +480,15 @@ class MainWindow(QMainWindow):
                 )
                 beat_fade = bar_fade_seconds(self.fade_bars.value(), effective_bpm)
                 trigger_ms = max(trigger_ms, round((beat_fade + 7.0) * 1000))
-            if 0 < remaining <= trigger_ms and self._last_triggered_side != side:
+            source = self.left if side == "left" else self.right
+            position_ms, duration_ms = source.engine.current_times()
+            long_enough = duration_ms >= trigger_ms + self._AUTOMIX_MIN_PLAYED_MS
+            if (
+                long_enough
+                and position_ms >= self._AUTOMIX_MIN_PLAYED_MS
+                and 0 < remaining <= trigger_ms
+                and self._last_triggered_side != side
+            ):
                 self._request_automix(side)
                 break
 

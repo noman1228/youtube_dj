@@ -76,10 +76,15 @@ def refresh_dependencies() -> None:
             cwd=PROJECT_DIR,
             check=True,
         )
+        subprocess.run(
+            [str(python), "-m", "pip", "install", "--upgrade", "yt-dlp[default]"],
+            cwd=PROJECT_DIR,
+            check=True,
+        )
     except subprocess.CalledProcessError as exc:
         raise UpdateError(
             "The source was updated, but dependency installation failed.\n"
-            f'Retry with: "{python}" -m pip install -r requirements.txt'
+            "Retry by running run_windows.bat."
         ) from exc
 
 

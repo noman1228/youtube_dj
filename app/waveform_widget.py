@@ -43,8 +43,8 @@ class WaveformWidget(QWidget):
         if len(self._samples) > self._MAX_SAMPLES:
             del self._samples[: len(self._samples) - self._MAX_SAMPLES]
         if self._duration_ms > 0:
-            self._place_sample(*sample)
-            self.update()
+            if self._place_sample(*sample):
+                self.update()
 
     def set_position(self, position_ms: int, duration_ms: int) -> None:
         position_ms = max(0, position_ms)
@@ -55,13 +55,16 @@ class WaveformWidget(QWidget):
         self._position_ms = position_ms
         self.update()
 
-    def _place_sample(self, time_ms: int, level: float) -> None:
+    def _place_sample(self, time_ms: int, level: float) -> bool:
         index = min(
             self._BIN_COUNT - 1,
             max(0, int(time_ms / self._duration_ms * self._BIN_COUNT)),
         )
-        self._levels[index] = max(self._levels[index], level)
+        was_known = self._known[index]
+        previous = self._levels[index]
+        self._levels[index] = max(previous, level)
         self._known[index] = True
+        return not was_known or self._levels[index] > previous
 
     def _rebuild(self) -> None:
         self._levels = [0.0] * self._BIN_COUNT

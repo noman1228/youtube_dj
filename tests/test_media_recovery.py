@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QApplication
 
-from app.media import QtMediaDeckEngine
+from app.media import QtMediaDeckEngine, _effective_duration_ms
 from app.models import Track
 
 
@@ -19,6 +20,11 @@ class MediaRecoveryTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.engine = QtMediaDeckEngine()
+        # Exercise recovery without starting a decoder or touching the network.
+        self.engine._player = Mock(spec=QMediaPlayer)
+        self.engine._player.position.return_value = 0
+        self.engine._player.duration.return_value = 0
+        self.engine._player.playbackState.return_value = QMediaPlayer.PlaybackState.StoppedState
         self.engine._track = Track(
             title="Network stream",
             webpage_url="https://www.youtube.com/watch?v=test",
@@ -84,6 +90,260 @@ class MediaRecoveryTest(unittest.TestCase):
         self.engine._player_error(QMediaPlayer.Error.NetworkError, "late error")
         self.assertEqual(self.engine._retry_attempt, 0)
         self.assertFalse(self.engine._retry_timer.isActive())
+
+    def test_resolved_duration_wins_over_short_stream_segment(self) -> None:
+        self.assertEqual(_effective_duration_ms(10_000, 240_000), 240_000)
+
+    def test_longer_backend_duration_preserves_subsecond_metadata_tail(self) -> None:
+        self.assertEqual(_effective_duration_ms(240_750, 240_000), 240_750)
+
+    def test_manifest_window_cannot_override_resolved_duration(self) -> None:
+        self.assertEqual(_effective_duration_ms(600_000, 240_000), 240_000)
+
+    def test_play_during_resolution_does_not_restart_resolver(self) -> None:
+        self.engine._resolving = True
+        self.engine._ready = False
+        generation = self.engine._generation
+
+        self.engine.play()
+
+        self.assertEqual(self.engine._generation, generation)
+        self.assertTrue(self.engine._autoplay_after_resolve)
+
+    def test_three_second_end_reconnects_instead_of_finishing_song(self) -> None:
+        ended = Mock()
+        self.engine.ended.connect(ended)
+        self.engine._ready = True
+        self.engine._play_requested = True
+        self.engine._resolved_duration_ms = 240_000
+        self.engine._player.position.return_value = 3_000
+        self.engine._player.duration.return_value = 3_000
+
+        self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        ended.assert_not_called()
+        self.assertTrue(self.engine._retry_timer.isActive())
+        self.assertEqual(self.engine._retry_attempt, 1)
+        self.assertEqual(self.engine._retry_position_ms, 3_000)
+        self.assertTrue(self.engine._play_requested)
+
+    def test_position_reset_before_early_end_preserves_resume_position(self) -> None:
+        self.engine._ready = True
+        self.engine._play_requested = True
+        self.engine._resolved_duration_ms = 240_000
+        self.engine._player.position.return_value = 3_000
+        self.engine._position_changed(3_000)
+        self.engine._player.position.return_value = 0
+        self.engine._position_changed(0)
+
+        self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        self.assertEqual(self.engine._retry_position_ms, 3_000)
+        self.assertEqual(self.engine._retry_attempt, 1)
+
+    def test_end_at_full_duration_finishes_normally(self) -> None:
+        ended = Mock()
+        self.engine.ended.connect(ended)
+        self.engine._resolved_duration_ms = 240_000
+        self.engine._player.position.return_value = 240_000
+        self.engine._play_requested = True
+
+        self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        ended.assert_called_once_with()
+        self.assertFalse(self.engine._retry_timer.isActive())
+        self.assertFalse(self.engine._play_requested)
+
+    def test_end_within_two_seconds_of_full_duration_finishes_normally(self) -> None:
+        ended = Mock()
+        self.engine.ended.connect(ended)
+        self.engine._resolved_duration_ms = 240_000
+        self.engine._player.position.return_value = 238_500
+
+        self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        ended.assert_called_once_with()
+        self.assertEqual(self.engine._retry_attempt, 0)
+
+    def test_local_file_end_does_not_request_network_recovery(self) -> None:
+        ended = Mock()
+        self.engine.ended.connect(ended)
+        self.engine._track.source = "Local file"
+        self.engine._resolved_duration_ms = 240_000
+        self.engine._player.position.return_value = 3_000
+
+        self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        ended.assert_called_once_with()
+        self.assertFalse(self.engine._retry_timer.isActive())
+
+    def test_unknown_duration_end_finishes_normally(self) -> None:
+        ended = Mock()
+        self.engine.ended.connect(ended)
+        self.engine._player.position.return_value = 3_000
+        self.engine._player.duration.return_value = 3_000
+
+        self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        ended.assert_called_once_with()
+        self.assertEqual(self.engine._retry_attempt, 0)
+
+    def test_delayed_end_after_stop_does_not_finish_or_restart_song(self) -> None:
+        ended = Mock()
+        self.engine.ended.connect(ended)
+        self.engine.stop()
+
+        self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        ended.assert_not_called()
+        self.assertFalse(self.engine._retry_timer.isActive())
+
+    def test_delayed_end_during_resolution_does_not_finish_song(self) -> None:
+        ended = Mock()
+        self.engine.ended.connect(ended)
+        self.engine._resolving = True
+
+        self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        ended.assert_not_called()
+        self.assertEqual(self.engine._retry_attempt, 0)
+
+    def test_end_after_retry_exhaustion_does_not_advance(self) -> None:
+        ended = Mock()
+        self.engine.ended.connect(ended)
+        self.engine._retry_attempt = self.engine._MAX_STREAM_RETRIES
+        self.engine._schedule_stream_retry("socket reset")
+
+        self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        ended.assert_not_called()
+        self.assertFalse(self.engine._retry_timer.isActive())
+
+    def test_stream_that_never_starts_reconnects_after_timeout(self) -> None:
+        self.engine._ready = True
+
+        self.engine.play()
+
+        self.assertTrue(self.engine._stall_timer.isActive())
+        self.assertEqual(self.engine._stall_timer.interval(), 20_000)
+        self.engine._stream_timed_out()
+        self.assertEqual(self.engine._retry_attempt, 1)
+        self.assertTrue(self.engine._retry_timer.isActive())
+        self.assertFalse(self.engine._stall_timer.isActive())
+
+    def test_position_progress_refreshes_timeout_but_duplicate_does_not(self) -> None:
+        self.engine._ready = True
+        self.engine.play()
+        self.engine._player.position.return_value = 3_000
+
+        with patch.object(self.engine._stall_timer, "start") as start:
+            self.engine._position_changed(3_000)
+            self.engine._position_changed(3_000)
+
+        start.assert_called_once()
+
+    def test_pause_cancels_timeout_and_late_timeout_does_not_reconnect(self) -> None:
+        self.engine._ready = True
+        self.engine.play()
+
+        self.engine.pause()
+        self.engine._stream_timed_out()
+
+        self.assertFalse(self.engine._stall_timer.isActive())
+        self.assertEqual(self.engine._retry_attempt, 0)
+
+    def test_stop_cancels_timeout_and_late_timeout_does_not_reconnect(self) -> None:
+        self.engine._ready = True
+        self.engine.play()
+
+        self.engine.stop()
+        self.engine._stream_timed_out()
+
+        self.assertFalse(self.engine._stall_timer.isActive())
+        self.assertEqual(self.engine._retry_attempt, 0)
+
+    def test_local_file_playback_does_not_start_network_timeout(self) -> None:
+        self.engine._ready = True
+        self.engine._track.source = "Local file"
+
+        self.engine.play()
+        self.engine._stream_timed_out()
+
+        self.assertFalse(self.engine._stall_timer.isActive())
+        self.assertEqual(self.engine._retry_attempt, 0)
+
+    def test_preloaded_stream_without_autoplay_does_not_timeout(self) -> None:
+        self.engine._resolved(
+            self.engine._generation, self.engine._track,
+            "https://example.invalid/audio", 240, "AUDIO STREAM",
+        )
+
+        self.engine._stream_timed_out()
+
+        self.engine._player.play.assert_not_called()
+        self.assertFalse(self.engine._stall_timer.isActive())
+        self.assertEqual(self.engine._retry_attempt, 0)
+
+    def test_pause_during_resolution_cancels_eventual_autoplay(self) -> None:
+        self.engine._resolving = True
+        self.engine._autoplay_after_resolve = True
+        self.engine._play_requested = True
+
+        self.engine.pause()
+        self.engine._resolved(
+            self.engine._generation, self.engine._track,
+            "https://example.invalid/audio", 240, "AUDIO STREAM",
+        )
+
+        self.engine._player.play.assert_not_called()
+        self.assertFalse(self.engine._autoplay_after_resolve)
+        self.assertFalse(self.engine._stall_timer.isActive())
+
+    def test_play_during_pending_retry_keeps_scheduled_delay(self) -> None:
+        self.engine._schedule_stream_retry("socket reset")
+
+        with patch.object(self.engine, "_begin_resolve") as resolve:
+            self.engine.play()
+
+        resolve.assert_not_called()
+        self.engine._player.play.assert_not_called()
+        self.assertTrue(self.engine._play_requested)
+        self.assertTrue(self.engine._retry_timer.isActive())
+        self.assertEqual(self.engine._retry_attempt, 1)
+
+    def test_repeated_early_end_stops_after_retry_budget(self) -> None:
+        errors = Mock()
+        ended = Mock()
+        self.engine.error.connect(errors)
+        self.engine.ended.connect(ended)
+        self.engine._resolved_duration_ms = 240_000
+        self.engine._play_requested = True
+
+        for _ in range(self.engine._MAX_STREAM_RETRIES + 1):
+            self.engine._retry_pending = False
+            self.engine._retry_timer.stop()
+            self.engine._ready = True
+            self.engine._player.position.return_value = 3_000
+            self.engine._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+
+        errors.assert_called_once()
+        ended.assert_not_called()
+        self.assertEqual(self.engine._retry_attempt, self.engine._MAX_STREAM_RETRIES)
+        self.assertFalse(self.engine._retry_timer.isActive())
+
+    def test_manual_play_after_exhaustion_restores_recovery_budget(self) -> None:
+        self.engine._ready = False
+        self.engine._retry_attempt = self.engine._MAX_STREAM_RETRIES
+        self.engine._schedule_stream_retry("socket reset")
+
+        with patch.object(self.engine, "_begin_resolve") as resolve:
+            self.engine.play()
+
+        resolve.assert_called_once_with(self.engine._track, autoplay=True)
+        self.assertFalse(self.engine._failure_reported)
+        self.assertEqual(self.engine._retry_attempt, 0)
+        self.engine._player_error(QMediaPlayer.Error.NetworkError, "socket reset again")
+        self.assertEqual(self.engine._retry_attempt, 1)
 
 
 if __name__ == "__main__":

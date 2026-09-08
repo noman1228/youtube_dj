@@ -167,6 +167,26 @@ class BeatTransitionTest(unittest.TestCase):
         self.assertIn(("seek", 0), self.calls)
         self.assertIn("TIMED MIX", self.main.status.text())
 
+    def test_automix_ignores_unreliable_or_too_early_duration(self) -> None:
+        self.main._pending_transition = None
+        self.main._beat_analysis_target = None
+        self.main._request_automix = lambda side: self.calls.append(("mix", side))
+        self.main.crossfader.setValue(0)
+        self.source.is_playing = lambda: True
+        self.main.left.current_remaining_ms = lambda: None
+
+        self.main._automation_tick()
+        self.assertNotIn(("mix", "left"), self.calls)
+
+        self.main.left.current_remaining_ms = lambda: 10_000
+        self.source.current_times = lambda: (1_000, 11_000)
+        self.main._automation_tick()
+        self.assertNotIn(("mix", "left"), self.calls)
+
+        self.source.current_times = lambda: (170_000, 180_000)
+        self.main._automation_tick()
+        self.assertIn(("mix", "left"), self.calls)
+
 
 if __name__ == "__main__":
     unittest.main()

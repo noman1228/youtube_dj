@@ -269,9 +269,11 @@ class DeckWidget(QFrame):
     def set_crossfade_factor(self, factor: float) -> None:
         self.engine.set_crossfade_factor(factor)
 
-    def current_remaining_ms(self) -> int:
+    def current_remaining_ms(self) -> int | None:
+        if not self.engine.has_reliable_duration():
+            return None
         current, total = self.engine.current_times()
-        return max(0, total - current) if total else 0
+        return max(0, total - current) if total else None
 
     def has_tracks(self) -> bool:
         return any(not track.played for track in self.tracks)
