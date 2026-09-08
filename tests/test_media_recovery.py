@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QUrl
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QApplication
 
@@ -344,6 +345,66 @@ class MediaRecoveryTest(unittest.TestCase):
         self.assertEqual(self.engine._retry_attempt, 0)
         self.engine._player_error(QMediaPlayer.Error.NetworkError, "socket reset again")
         self.assertEqual(self.engine._retry_attempt, 1)
+
+    def test_stale_media_status_preserves_resume_until_ready(self) -> None:
+        recovery_states = {
+            "_retry_pending": True,
+            "_resolving": True,
+            "_ready": False,
+            "_user_stopped": True,
+            "_failure_reported": True,
+        }
+        statuses = (
+            QMediaPlayer.MediaStatus.LoadedMedia,
+            QMediaPlayer.MediaStatus.BufferedMedia,
+        )
+        for attribute, value in recovery_states.items():
+            with self.subTest(state=attribute):
+                self.engine._player.setPosition.reset_mock()
+                self.engine._retry_position_ms = 3_000
+                self.engine._ready = True
+                setattr(self.engine, attribute, value)
+
+                for status in statuses:
+                    self.engine._resume_after_reconnect(status)
+
+                self.assertEqual(self.engine._retry_position_ms, 3_000)
+                self.engine._player.setPosition.assert_not_called()
+                setattr(self.engine, attribute, not value)
+
+                for status in statuses:
+                    self.engine._resume_after_reconnect(status)
+
+                self.engine._player.setPosition.assert_called_once_with(3_000)
+                self.assertEqual(self.engine._retry_position_ms, 0)
+
+    def test_synchronous_source_failure_does_not_emit_loaded_or_autoplay(self) -> None:
+        loaded = Mock()
+        states: list[str] = []
+        self.engine.loaded.connect(loaded)
+        self.engine.stateChanged.connect(states.append)
+        self.engine._resolving = True
+        self.engine._play_requested = True
+        self.engine._autoplay_after_resolve = True
+
+        def fail_source(source: QUrl) -> None:
+            if not source.isEmpty():
+                self.engine._player_error(
+                    QMediaPlayer.Error.NetworkError, "synchronous source failure"
+                )
+
+        self.engine._player.setSource.side_effect = fail_source
+        self.engine._resolved(
+            self.engine._generation, self.engine._track,
+            "https://example.invalid/audio", 240, "AUDIO STREAM",
+        )
+
+        loaded.assert_not_called()
+        self.engine._player.play.assert_not_called()
+        self.assertTrue(self.engine._retry_pending)
+        self.assertFalse(self.engine._ready)
+        self.assertEqual(self.engine._retry_attempt, 1)
+        self.assertEqual(states[-1], "RECONNECTING 1/3")
 
 
 if __name__ == "__main__":

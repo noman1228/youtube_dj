@@ -68,6 +68,11 @@ laptop. Reopen the launcher after installing a runtime so it receives the new
 `PATH`. If YouTube tracks stop early or fail to start, run `run_windows.bat` again
 to refresh the extractor and challenge scripts before retrying.
 
+The minimum supported `yt-dlp` version is **2026.8.19**. That release
+[removed the old Android VR client from its defaults](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19).
+Older extractors can resolve song metadata yet return audio URLs that YouTube
+rejects with HTTP 403.
+
 ## How to use
 
 1. Click **SEARCH MUSIC**.
