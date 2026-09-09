@@ -269,17 +269,23 @@ class ProjectorWindow(QMainWindow):
         if self.isVisible():
             self._close_confirmation_open = True
             try:
-                text, accepted = QInputDialog.getText(
-                    self.parentWidget() or self,
-                    "Close projector",
-                    "The projector is keeping the video or idle logo on screen.\n"
-                    "Type CLOSE to turn off the projector window:",
-                )
+                for message in (
+                    "Close the projector window?",
+                    "This will remove the video or idle logo from the audience screen.\n"
+                    "Are you sure you want to close the projector?",
+                ):
+                    reply = QMessageBox.question(
+                        self.parentWidget() or self,
+                        "Close projector",
+                        message,
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if reply != QMessageBox.StandardButton.Yes:
+                        event.ignore()
+                        return
             finally:
                 self._close_confirmation_open = False
-            if not accepted or text.strip() != "CLOSE":
-                event.ignore()
-                return
         self.closed.emit()
         super().closeEvent(event)
 
@@ -341,6 +347,14 @@ class KaraokeWindow(QDialog):
         self.engine.ended.connect(self._ended)
         self.engine.error.connect(lambda message: QMessageBox.warning(self, "Karaoke deck", message))
 
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        # The search field already submits Return. Do not let QDialog also
+        # activate the default button (the main deck's play/pause remote).
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def _build_main_remote(self, main_window: QWidget) -> QWidget:
         panel = QFrame()
         panel.setObjectName("DeckFrame")
@@ -360,6 +374,7 @@ class KaraokeWindow(QDialog):
         layout.addWidget(self.main_side)
 
         self.main_play_button = QPushButton("PLAY / PAUSE")
+        self.main_play_button.setAutoDefault(False)
         layout.addWidget(self.main_play_button)
 
         volume_label = QLabel("VOLUME")

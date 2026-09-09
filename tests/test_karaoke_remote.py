@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QInputDialog
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.main_window import MainWindow
 from app.models import Track
@@ -47,13 +47,35 @@ class KaraokeRemotePlaylistTest(unittest.TestCase):
         self.karaoke.queueChanged.emit()
 
     def tearDown(self) -> None:
-        with patch.object(QInputDialog, "getText", return_value=("CLOSE", True)):
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
             self.main.close()
 
     def test_main_window_mirrors_karaoke_queue(self) -> None:
         self.assertEqual(self.main.karaoke_playlist.count(), 2)
         self.assertIn("Singer One", self.main.karaoke_playlist.item(0).text())
         self.assertTrue(self.main.karaoke_playlist.item(1).font().strikeOut())
+
+    def test_search_enter_does_not_activate_main_deck_remote(self) -> None:
+        self.karaoke.show()
+        self.app.processEvents()
+        with patch.object(self.main.left, "play") as left_play, \
+                patch.object(self.main.right, "play") as right_play, \
+                patch.object(self.karaoke._pool, "start") as start:
+            for side in (0, 1):
+                self.karaoke.main_side.setCurrentIndex(side)
+                self.karaoke.main_play_button.setFocus()
+                self.app.processEvents()
+                self.karaoke.search_edit.setFocus()
+                for query in ("test song", ""):
+                    self.karaoke.search_edit.setText(query)
+                    for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                        start.reset_mock()
+                        QTest.keyClick(self.karaoke.search_edit, key)
+                        self.assertEqual(start.call_count, 1 if query else 0)
+                        left_play.assert_not_called()
+                        right_play.assert_not_called()
+            self.karaoke.main_play_button.click()
+            right_play.assert_called_once()
 
     def test_double_click_target_replays_exact_entry(self) -> None:
         item = self.main.karaoke_playlist.item(1)
@@ -98,18 +120,24 @@ class KaraokeRemotePlaylistTest(unittest.TestCase):
         self.assertFalse(self.main._karaoke_blink_timer.isActive())
         self.assertFalse(self.main.karaoke_remote.property("playing"))
 
-    def test_projector_close_requires_exact_confirmation(self) -> None:
+    def test_projector_close_requires_two_yes_confirmations(self) -> None:
         self.karaoke.open_projector()
         closed = Mock()
         self.karaoke.projector.closed.connect(closed)
         self.assertFalse(self.karaoke.projector.windowFlags() & Qt.WindowType.WindowCloseButtonHint)
-        for reply in (("", True), ("close", True), ("CLOSE", False)):
-            with self.subTest(reply=reply), patch.object(QInputDialog, "getText", return_value=reply):
+        for replies in ([QMessageBox.StandardButton.No],
+                        [QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No]):
+            with self.subTest(replies=replies), patch.object(QMessageBox, "question", side_effect=replies) as prompt:
                 self.assertFalse(self.karaoke.projector.close())
                 self.assertTrue(self.karaoke.projector.isVisible())
                 closed.assert_not_called()
-        with patch.object(QInputDialog, "getText", return_value=("CLOSE", True)) as prompt:
+                self.assertEqual(prompt.call_count, len(replies))
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes) as prompt:
             self.assertTrue(self.karaoke.projector.close())
+        self.assertEqual(prompt.call_count, 2)
+        for call in prompt.call_args_list:
+            self.assertEqual(call.args[3], QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            self.assertEqual(call.args[4], QMessageBox.StandardButton.No)
         self.assertIs(prompt.call_args.args[0], self.main)
         self.assertFalse(self.karaoke.projector.isVisible())
         closed.assert_called_once()
@@ -117,12 +145,12 @@ class KaraokeRemotePlaylistTest(unittest.TestCase):
 
     def test_remote_close_cancel_restores_checked_button(self) -> None:
         self.main.karaoke_projector_button.click()
-        with patch.object(QInputDialog, "getText", return_value=("", False)):
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
             self.main.karaoke_projector_button.click()
         self.assertTrue(self.karaoke.projector.isVisible())
         self.assertTrue(self.main.karaoke_projector_button.isChecked())
         self.assertEqual(self.main.karaoke_projector_button.text(), "CLOSE PROJECTOR")
-        with patch.object(QInputDialog, "getText", return_value=("CLOSE", True)):
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
             self.main.karaoke_projector_button.click()
         self.assertFalse(self.karaoke.projector.isVisible())
         self.assertFalse(self.main.karaoke_projector_button.isChecked())
@@ -131,7 +159,7 @@ class KaraokeRemotePlaylistTest(unittest.TestCase):
         self.main.show()
         self.karaoke.show()
         self.karaoke.open_projector()
-        with patch.object(self.karaoke.engine, "stop") as stop, patch.object(QInputDialog, "getText") as prompt:
+        with patch.object(self.karaoke.engine, "stop") as stop, patch.object(QMessageBox, "question") as prompt:
             self.karaoke.close()
             self.app.processEvents()
             self.assertTrue(self.karaoke.projector.isVisible())
@@ -147,12 +175,12 @@ class KaraokeRemotePlaylistTest(unittest.TestCase):
         self.main.show()
         self.karaoke.open_projector()
         with patch.object(self.karaoke.engine, "stop") as stop:
-            with patch.object(QInputDialog, "getText", return_value=("", False)):
+            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
                 self.assertFalse(self.main.close())
             self.assertTrue(self.main.isVisible())
             self.assertTrue(self.karaoke.projector.isVisible())
             stop.assert_not_called()
-            with patch.object(QInputDialog, "getText", return_value=("CLOSE", True)):
+            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
                 self.assertTrue(self.main.close())
             stop.assert_called_once()
             self.assertFalse(self.karaoke.projector.isVisible())

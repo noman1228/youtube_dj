@@ -5,7 +5,7 @@ import math
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, QTimer, Qt
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTimer, Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -174,7 +174,7 @@ class MainWindow(QMainWindow):
         self.karaoke_projector_button = QPushButton("SHOW PROJECTOR")
         self.karaoke_projector_button.setCheckable(True)
         self.karaoke_projector_button.setProperty("compactControl", True)
-        self.karaoke_projector_button.setToolTip("Open the projector; closing it requires typing CLOSE")
+        self.karaoke_projector_button.setToolTip("Open the projector; closing it requires two Yes confirmations")
         karaoke_remote_layout.addWidget(self.karaoke_projector_button)
 
         karaoke_volume_row = QHBoxLayout()
@@ -286,6 +286,15 @@ class MainWindow(QMainWindow):
         self.karaoke_playlist.itemDoubleClicked.connect(self._play_karaoke_queue_item)
         self.beat_match.toggled.connect(self._sync_fade_mode_controls)
 
+        for button in (
+            self.left.play_button, self.left.stop_button, self.left.next_button,
+            self.right.play_button, self.right.stop_button, self.right.next_button,
+            self.karaoke_play_button,
+        ):
+            button.setAutoDefault(False)
+            button.setDefault(False)
+            button.installEventFilter(self)
+
         self._automation_timer = QTimer(self)
         self._automation_timer.setInterval(200)
         self._automation_timer.timeout.connect(self._automation_tick)
@@ -320,6 +329,14 @@ class MainWindow(QMainWindow):
         self._apply_crossfader(self._CROSSFADER_MAX // 2)
         self._sync_fade_mode_controls()
         QTimer.singleShot(0, self._load_playlists)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        # Playback controls must not activate on Return or numeric-keypad Enter.
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                event.accept()
+                return True
+        return super().eventFilter(watched, event)
 
     def open_search(self, preferred_side: str | None) -> None:
         if self._search_dialog is None:

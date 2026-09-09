@@ -25,6 +25,7 @@ from .beat import BeatInfo, BeatTracker
 from .hls import HlsPlaylistServer, HlsVideoSource, select_hls_video
 from .models import Track
 from .media_cache import prepare_media
+from .waveform_analysis import WaveformJob, waveform_analysis, waveform_key
 
 
 @dataclass
@@ -389,6 +390,7 @@ class QtMediaDeckEngine(QObject):
     ended = Signal()
     error = Signal(str)
     waveformSample = Signal(int, float)
+    waveformReady = Signal(object)
     audioLevelChanged = Signal(float)
 
     def __init__(
@@ -433,6 +435,13 @@ class QtMediaDeckEngine(QObject):
         self._hls_source: HlsVideoSource | None = None
         self._last_audio_analysis_ms = -self._AUDIO_ANALYSIS_INTERVAL_MS
         self._beat_tracker = BeatTracker()
+        self._waveform_key: str | None = None
+        self._waveform_owner = object()
+        self._waveform_analysis = waveform_analysis() if capture_waveform else None
+        if self._waveform_analysis is not None:
+            self._waveform_analysis.ready.connect(self._waveform_ready)
+            analysis, owner = self._waveform_analysis, self._waveform_owner
+            self.destroyed.connect(lambda: analysis.release(owner))
 
         self._player = QMediaPlayer(self)
         self._audio_output = QAudioOutput(self)
@@ -488,6 +497,9 @@ class QtMediaDeckEngine(QObject):
         self._player.setVideoSink(sink)
 
     def load(self, track: Track, autoplay: bool = False) -> None:
+        self._waveform_key = None
+        if self._waveform_analysis is not None:
+            self._waveform_analysis.release(self._waveform_owner, "current")
         # Let next-up preparation finish and populate the shared cache. The
         # requested load is queued ahead of other speculative work.
         prefetch = self._prefetch_task
@@ -535,7 +547,12 @@ class QtMediaDeckEngine(QObject):
             self._prefetch_task = None
         self._prefetched_media = None
         self._prefetch_url = ""
-        if not track or track.source == "Local file" or track.webpage_url.startswith("file:"):
+        if track and (track.source == "Local file" or track.webpage_url.startswith("file:")):
+            self._request_waveform(track, track.webpage_url, "next")
+            return
+        if self._waveform_analysis is not None:
+            self._waveform_analysis.release(self._waveform_owner, "next")
+        if not track:
             return
         if self._track and self._track.webpage_url == track.webpage_url:
             return
@@ -553,6 +570,33 @@ class QtMediaDeckEngine(QObject):
         if self._prefetch_task and generation == self._prefetch_task.generation:
             self._prefetched_media = source if isinstance(source, PreparedMedia) else None
             self._prefetch_task = None
+            self._request_waveform(_track, source, "next")
+
+    def _request_waveform(self, track: Track, source: object, slot: str) -> None:
+        if self._waveform_analysis is None:
+            return
+        if isinstance(source, PreparedMedia):
+            path, local = source.path, False
+        elif isinstance(source, str) and QUrl(source).isLocalFile():
+            path, local = Path(QUrl(source).toLocalFile()), True
+        else:
+            return
+        try:
+            key = waveform_key(track.webpage_url, path, local)
+        except OSError:
+            self._waveform_analysis.release(self._waveform_owner, slot)
+            return
+        if slot == "current":
+            self._waveform_key = key
+        self._waveform_analysis.request(
+            self._waveform_owner, slot,
+            WaveformJob(key, path, 1 if slot == "current" else 0, source),
+        )
+
+    @Slot(str, object)
+    def _waveform_ready(self, key: str, data: object) -> None:
+        if key == self._waveform_key:
+            self.waveformReady.emit(data)
 
     @Slot(int, str)
     def _prefetch_failed(self, generation: int, _message: str) -> None:
@@ -601,6 +645,7 @@ class QtMediaDeckEngine(QObject):
         self._video_height = 0
         previous_media = self._prepared_media
         self._prepared_media = stream_url if isinstance(stream_url, PreparedMedia) else None
+        self._request_waveform(track, stream_url, "current")
         if isinstance(stream_url, PreparedMedia):
             self._video_height = stream_url.height
             stream_url = stream_url.path.as_uri()

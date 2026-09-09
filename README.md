@@ -7,7 +7,7 @@ A working first-phase desktop DJ application with:
 - Separate YouTube / YouTube Music search window
 - Search result thumbnails, metadata, descriptions, and direct **Add Left / Add Right** actions
 - Equal-power crossfader
-- Live decoded-audio waveforms on both decks with playheads and click/drag seeking
+- Background-prepared waveforms on both decks with playheads, click/drag seeking, and live audio fallback
 - Automatic transition when the dominant deck reaches 10 seconds remaining
 - Optional beat-matched Auto Mix with silent incoming-deck analysis, harmonic tempo normalization, phase alignment, and fades driven by 1–8 complete bars
 - Configurable 2–10 second fade time for timed mode and beat-analysis fallback
@@ -84,6 +84,17 @@ rejects with HTTP 403.
 9. Use **KARAOKE REMOTE** on the main mixer to pause/resume karaoke, set its volume, or fade it in/out over the selected duration.
 10. The karaoke queue is mirrored in **KARAOKE REMOTE**. Double-click an entry there to jump directly to it.
 11. Leave **BEAT MATCH** enabled and choose **FADE BARS** for a beat-driven Auto Mix. Disable it to expose **FADE SECONDS** and use only the original timed crossfade.
+
+## Waveforms
+
+Waveforms are analyzed silently as loaded and next-up audio becomes available. A single
+low-priority helper process uses Qt's existing decoder, keeping analysis outside the UI
+and playback processes. It reuses prepared downloads and local files; it does not download
+the entire playlist. Each song is analyzed as it reaches the existing preloader.
+Compact waveforms are cached across sessions in the application's cache directory
+(up to 1,000 tracks). Local-file changes invalidate their cached waveform. If analysis
+fails, the waveform continues to build during playback as before. No additional software
+installation is required. Beat detection still uses the playing deck's audio independently.
 
 ## Beat-matched Auto Mix
 

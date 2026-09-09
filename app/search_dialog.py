@@ -13,7 +13,7 @@ if __name__ == "__main__" and not __package__:
     raise SystemExit(main())
 
 from PySide6.QtCore import QByteArray, QThreadPool, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QKeyEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QComboBox,
@@ -208,6 +208,13 @@ class SearchDialog(QDialog):
         self.search_button.clicked.connect(self.search)
         self.search_edit.returnPressed.connect(self.search)
         self._network.finished.connect(self._thumbnail_finished)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        # The search field already handles Return; avoid a second default-button action.
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def focus_search(self) -> None:
         self.search_edit.setFocus()

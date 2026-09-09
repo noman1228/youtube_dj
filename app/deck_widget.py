@@ -158,6 +158,7 @@ class DeckWidget(QFrame):
         self.engine.stateChanged.connect(self._state_changed)
         self.engine.positionChanged.connect(self._position_changed)
         self.engine.waveformSample.connect(self.waveform.add_sample)
+        self.engine.waveformReady.connect(self._waveform_ready)
         self.engine.waveformSample.connect(self._update_bpm)
         self.engine.audioLevelChanged.connect(self._update_vu)
         self.engine.loaded.connect(self._loaded)
@@ -332,6 +333,11 @@ class DeckWidget(QFrame):
             self.vu_meter.set_level(level)
         else:
             self.vu_meter.reset()
+
+    def _waveform_ready(self, data: object) -> None:
+        if (0 <= self.current_index < len(self.tracks)
+                and self.engine.track is self.tracks[self.current_index]):
+            self.waveform.set_overview(data)
 
     def _position_changed(self, current_ms: int, total_ms: int) -> None:
         self.elapsed.setText(_format_ms(current_ms))

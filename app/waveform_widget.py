@@ -4,9 +4,11 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from .waveform_analysis import valid_waveform
+
 
 class WaveformWidget(QWidget):
-    """Compact track overview built from audio decoded during playback."""
+    """Prepared track overview with live decoded audio as a fallback."""
 
     seekRequested = Signal(float)
     _BIN_COUNT = 512
@@ -18,6 +20,7 @@ class WaveformWidget(QWidget):
         self._levels = [0.0] * self._BIN_COUNT
         self._known = [False] * self._BIN_COUNT
         self._samples: list[tuple[int, float]] = []
+        self._overview: list[float] | None = None
         self._duration_ms = 0
         self._position_ms = 0
         self._seek_preview_fraction: float | None = None
@@ -25,7 +28,7 @@ class WaveformWidget(QWidget):
         self.setMaximumHeight(82)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Waveform builds during playback. Click or drag to seek.")
+        self.setToolTip("Waveform prepares in the background, with live playback as a fallback. Click or drag to seek.")
 
     def sizeHint(self) -> QSize:
         return QSize(320, 72)
@@ -34,12 +37,25 @@ class WaveformWidget(QWidget):
         self._levels = [0.0] * self._BIN_COUNT
         self._known = [False] * self._BIN_COUNT
         self._samples.clear()
+        self._overview = None
         self._duration_ms = max(0, duration_ms)
         self._position_ms = 0
         self._seek_preview_fraction = None
         self.update()
 
+    def set_overview(self, data: object) -> None:
+        if not valid_waveform(data):
+            return
+        self._overview = list(data["levels"])
+        self._samples.clear()
+        if not self._duration_ms:
+            self._duration_ms = data["duration_ms"]
+        self._rebuild()
+        self.update()
+
     def add_sample(self, time_ms: int, level: float) -> None:
+        if self._overview is not None:
+            return
         sample = (max(0, time_ms), max(0.0, min(1.0, level)))
         self._samples.append(sample)
         if len(self._samples) > self._MAX_SAMPLES:
@@ -69,6 +85,10 @@ class WaveformWidget(QWidget):
         return not was_known or self._levels[index] > previous
 
     def _rebuild(self) -> None:
+        if self._overview is not None:
+            self._levels = list(self._overview)
+            self._known = [True] * self._BIN_COUNT
+            return
         self._levels = [0.0] * self._BIN_COUNT
         self._known = [False] * self._BIN_COUNT
         if self._duration_ms > 0:
@@ -108,7 +128,7 @@ class WaveformWidget(QWidget):
 
         if not any(self._known):
             painter.setPen(QColor("#66758c"))
-            painter.drawText(graph, Qt.AlignmentFlag.AlignCenter, "WAVEFORM READY ON PLAY")
+            painter.drawText(graph, Qt.AlignmentFlag.AlignCenter, "WAVEFORM PREPARING / READY ON PLAY")
 
         if self._duration_ms > 0:
             playhead_x = graph.left() + round(fraction * graph_width)
