@@ -17,11 +17,18 @@ A working first-phase desktop DJ application with:
 - An independent third karaoke video deck with YouTube-only search, a manual queue, and detachable projector output
 - Reciprocal remotes: control the selected main deck from Karaoke, or karaoke playback, fades, and queue selection from the main mixer
 
-## Windows requirements
+## Desktop requirements
 
 1. **Python 3.11 or newer, 64-bit**
 2. A JavaScript runtime for YouTube extraction. Setup installs **Deno inside `.venv`** automatically; no separate system installation or `PATH` change is needed. EncoreMix also supports an existing **Node.js 22+** installation. See [yt-dlp's runtime setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS) for details.
 3. Internet access
+
+Windows, macOS, and Linux use the same Python launcher. Install Python for your
+machine's architecture and create a fresh environment on each machine; do not copy
+`.venv` between computers. Linux also needs a working desktop/audio stack and
+[Qt's platform libraries](https://doc.qt.io/qt-6/linux-requirements.html).
+Availability of PySide6 and Deno wheels limits supported OS/CPU combinations;
+setup stops if a required package cannot be installed.
 
 ## Fast start
 
@@ -34,6 +41,29 @@ run_windows.bat
 The script creates a local `.venv`, installs the packages, updates `yt-dlp` and its
 matching YouTube challenge scripts and Deno runtime, and launches the application. Other packages
 are updated only when needed to satisfy `requirements.txt`.
+
+On macOS or Linux, run `python3 run.py`. On Windows, `python run.py` is also
+available. Both install into `.venv` and check package consistency before launch.
+
+Playback explicitly uses Qt's FFmpeg backend supplied with PySide6. A separate
+VLC installation, FFmpeg command-line executable, or Windows Store HEVC extension
+is not part of setup. HEVC playback needs a decoder, not an encoder.
+Startup checks registered H.264, HEVC, VP9, AV1 and common audio decoders, an audio output device,
+and a working YouTube JavaScript runtime before opening the mixer.
+
+- `python run.py --repair`: reinstall the required packages and playback libraries.
+- `python run.py --check`: set up the environment and report readiness without playback.
+- `python run.py --software-video`: use CPU video decoding for laptops with GPU driver issues.
+- `.venv\Scripts\python.exe main.py --check`: offline Windows readiness check;
+  use `.venv/bin/python main.py --check` on macOS/Linux.
+
+Software decoding can use more CPU, particularly for 4K video. This switch uses
+[Qt's FFmpeg configuration](https://doc.qt.io/qt-6/advanced-ffmpeg-configuration.html).
+Capability checks cannot prove that every codec profile, driver, projector, or
+remote stream works. Verify a representative karaoke track on each target machine
+before a show. System libraries and drivers are not installed automatically;
+Linux deployments may need matching FFmpeg shared libraries as described in
+[Qt Multimedia deployment](https://doc.qt.io/qt-6/qtmultimedia-index.html).
 
 Manual launch:
 
@@ -85,6 +115,19 @@ rejects with HTTP 403.
 10. The karaoke queue is mirrored in **KARAOKE REMOTE**. Double-click an entry there to jump directly to it.
 11. Leave **BEAT MATCH** enabled and choose **FADE BARS** for a beat-driven Auto Mix. Disable it to expose **FADE SECONDS** and use only the original timed crossfade.
 
+## Random related-song searches
+
+In the music search window, **SIMILAR TO LEFT** and **SIMILAR TO RIGHT** each
+use their deck's current loaded YouTube/YouTube Music track. Each click finds up to
+10 distinct random recommendations from that song's YouTube Music radio, excluding
+the seed, tracks already in that deck's queue, and the previous displayed results.
+Add recommendations using the usual deck buttons; searching does not change playback.
+
+Radio recommendations supply musical similarity. Available release years and
+view counts favor songs from a similar era and popularity range, but these
+fields are often missing, so matching is approximate. Local files are not
+supported as seeds. A paused track can also be used.
+
 ## Waveforms
 
 Waveforms are analyzed silently as loaded and next-up audio becomes available. A single
@@ -104,7 +147,7 @@ When **BEAT MATCH** is enabled, EncoreMix prepares the incoming deck before the 
 2. Its tempo is normalized against the active deck, including half-time and double-time BPM relationships.
 3. Playback is paused, aligned to the outgoing beat grid, and restarted silently to settle the phase.
 4. The deck is unmuted on a beat boundary and the equal-power crossfade advances for the selected number of complete bars.
-5. On the final beat, the outgoing deck is fully muted and the incoming deck returns to its original BPM.
+5. On the final beat, the outgoing deck is fully muted and the incoming deck returns to its original tempo (1.0x playback speed).
 
 The incoming playback rate is set once while the deck is muted and remains fixed for the entire audible mix. EncoreMix does not repeatedly retune the player during the crossfade; frequent playback-rate changes can cause underruns, choppy audio, or decoder glitches. Phase drift is measured for the on-screen status but does not mutate playback speed while both decks are audible.
 

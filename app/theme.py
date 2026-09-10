@@ -106,6 +106,8 @@ QListWidget {
 }
 QListWidget::item { padding: 7px; border-radius: 6px; }
 QListWidget::item:selected { background: #253952; }
+QListWidget#MainKaraokePlaylist { font-size: 9pt; }
+QListWidget#MainKaraokePlaylist::item { padding: 3px 5px; }
 QSlider::groove:horizontal {
     height: 7px;
     background: #253147;

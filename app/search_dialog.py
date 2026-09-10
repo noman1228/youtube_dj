@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from .models import Track
 from .search_service import SearchTask
+from .similar_search import SimilarSearchTask
 
 
 class ResultCard(QFrame):
@@ -97,7 +98,8 @@ class ResultCard(QFrame):
             meta_label.setToolTip(meta)
         text_col.addWidget(meta_label)
 
-        description = QLabel(track.description or "No description supplied.")
+        # setVisible(True) below must never show a temporary top-level window.
+        description = QLabel(track.description or "No description supplied.", text_panel)
         description.setWordWrap(True)
         description.setMaximumHeight(38)
         description.setToolTip(track.description)
@@ -151,6 +153,7 @@ class ResultCard(QFrame):
 
 class SearchDialog(QDialog):
     trackAdded = Signal(str, object)
+    similarRequested = Signal(str)
     _MINIMUM_WIDTH = 760
     _MAXIMUM_WIDTH = 900
 
@@ -169,7 +172,8 @@ class SearchDialog(QDialog):
         self._result_limit = 16
         self._seen_results: set[str] = set()
         self._provider_errors: list[str] = []
-        self._active_tasks: dict[tuple[int, str], SearchTask] = {}
+        self._active_tasks: dict[tuple[int, str], SearchTask | SimilarSearchTask] = {}
+        self._similar_side = ""
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 18)
@@ -191,8 +195,19 @@ class SearchDialog(QDialog):
         controls.addWidget(self.search_button)
         root.addLayout(controls)
 
+        similar_controls = QHBoxLayout()
+        for side, style in (("left", "PrimaryButton"), ("right", "HotButton")):
+            button = QPushButton(f"SIMILAR TO {side.upper()}")
+            button.setObjectName(style)
+            button.setAutoDefault(False)
+            button.setToolTip("Find 10 random related songs using this deck's current track. Era and popularity matching depends on available metadata.")
+            button.clicked.connect(lambda _checked=False, side=side: self.similarRequested.emit(side))
+            similar_controls.addWidget(button)
+        root.addLayout(similar_controls)
+
         self.status = QLabel("Enter a search term. Results can be sent directly to either deck.")
         self.status.setObjectName("Subtle")
+        self.status.setWordWrap(True)
         root.addWidget(self.status)
 
         self.scroll = QScrollArea()
@@ -224,6 +239,7 @@ class SearchDialog(QDialog):
         query = self.search_edit.text().strip()
         if not query:
             return
+        self._similar_side = ""
         self._search_generation += 1
         generation = self._search_generation
         self.status.setText(f"Searching {self.provider.currentText()} for “{query}”…")
@@ -244,6 +260,24 @@ class SearchDialog(QDialog):
             task.signals.finished.connect(self._provider_finished, Qt.ConnectionType.QueuedConnection)
             task.signals.failed.connect(self._provider_failed, Qt.ConnectionType.QueuedConnection)
             self._pool.start(task)
+
+    def search_similar(self, track: Track, side: str, excluded: set[str]) -> None:
+        self._search_generation += 1
+        generation = self._search_generation
+        self._similar_side = side
+        self._clear_results()
+        self._result_count = 0
+        self._seen_results.clear()
+        self._provider_errors.clear()
+        self._pending_providers = 1
+        provider = f"Similar to {side.upper()}"
+        self.status.setText(f'Finding 10 recommendations related to {side.upper()}: {track.title}…')
+        task = SimilarSearchTask(track, provider, generation, excluded)
+        self._active_tasks[(generation, provider)] = task
+        task.signals.result.connect(self._append_result, Qt.ConnectionType.QueuedConnection)
+        task.signals.finished.connect(self._provider_finished, Qt.ConnectionType.QueuedConnection)
+        task.signals.failed.connect(self._provider_failed, Qt.ConnectionType.QueuedConnection)
+        self._pool.start(task)
 
     def _clear_results(self) -> None:
         self.scroll.verticalScrollBar().setValue(0)
@@ -294,8 +328,11 @@ class SearchDialog(QDialog):
         if self._pending_providers > 0:
             return
         if self._result_count:
-            suffix = " Some providers failed." if self._provider_errors else " Pick your poison."
-            self.status.setText(f"{self._result_count} result(s).{suffix}")
+            if self._similar_side:
+                self.status.setText(f"{self._result_count} recommendation(s) for {self._similar_side.upper()}. Click again for more; genre, era and popularity are approximate.")
+            else:
+                suffix = " Some providers failed." if self._provider_errors else " Pick your poison."
+                self.status.setText(f"{self._result_count} result(s).{suffix}")
         else:
             self.status.setText("Search failed." if self._provider_errors else "No results found.")
             if self._provider_errors:

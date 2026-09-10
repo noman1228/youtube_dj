@@ -38,6 +38,7 @@ from .logo_pulse import LogoPulseController
 from .models import Track
 from .projector_preview import ProjectorPreview
 from .search_dialog import SearchDialog
+from .similar_search import youtube_id
 
 
 class MainWindow(QMainWindow):
@@ -211,6 +212,7 @@ class MainWindow(QMainWindow):
         karaoke_playlist_label.setObjectName("Subtle")
         karaoke_remote_layout.addWidget(karaoke_playlist_label)
         self.karaoke_playlist = QListWidget()
+        self.karaoke_playlist.setObjectName("MainKaraokePlaylist")
         self.karaoke_playlist.setMinimumHeight(75)
         self.karaoke_playlist.setMaximumHeight(120)
         self.karaoke_playlist.setToolTip("Double-click a track to play it in Karaoke")
@@ -342,12 +344,24 @@ class MainWindow(QMainWindow):
         if self._search_dialog is None:
             self._search_dialog = SearchDialog(self)
             self._search_dialog.trackAdded.connect(self._add_search_track)
+            self._search_dialog.similarRequested.connect(self._search_similar)
         if preferred_side:
             self._search_dialog.status.setText(f"Search results can be added to {preferred_side.upper()} or the opposite deck.")
         self._search_dialog.show()
         self._search_dialog.raise_()
         self._search_dialog.activateWindow()
         self._search_dialog.focus_search()
+
+    def _search_similar(self, side: str) -> None:
+        deck = self.left if side == "left" else self.right
+        track = deck.engine.track
+        if track is None or not youtube_id(track):
+            self._search_dialog.status.setText(f"Load a YouTube or YouTube Music track in {side.upper()} first.")
+            return
+        excluded = {youtube_id(item) for item in deck.tracks}
+        # Don't immediately suggest the same result on the next click.
+        excluded.update(self._search_dialog._seen_results)
+        self._search_dialog.search_similar(track, side, excluded)
 
     def open_karaoke(self) -> None:
         karaoke = self._get_karaoke_window()
@@ -407,7 +421,12 @@ class MainWindow(QMainWindow):
         for row in range(karaoke.playlist.count()):
             source_item = karaoke.playlist.item(row)
             if source_item is not None:
-                self.karaoke_playlist.addItem(source_item.clone())
+                item = source_item.clone()
+                font = item.font()
+                font.setPointSize(9)
+                item.setFont(font)
+                item.setToolTip(source_item.text())
+                self.karaoke_playlist.addItem(item)
         if 0 <= karaoke.current_index < self.karaoke_playlist.count():
             self.karaoke_playlist.setCurrentRow(karaoke.current_index)
 
@@ -876,10 +895,11 @@ class MainWindow(QMainWindow):
             # earlier tick, so explicitly enforce full gain on the new deck.
             self._apply_crossfader(self._transition_to)
             self._transition_active = False
+            if self._transition_target_side is not None:
+                target = self.left if self._transition_target_side == "left" else self.right
+                target.engine.set_playback_rate(1.0)
             if self._transition_beat_matched and self._transition_target_side is not None:
-                # Retuning the sole audible deck can flush its audio buffers.
-                # The next load restores native speed before playback starts.
-                self.status.setText("BEAT MIX COMPLETE - TEMPO HELD")
+                self.status.setText("BEAT MIX COMPLETE - ORIGINAL TEMPO")
             else:
                 self.status.setText("AUTOMIX COMPLETE")
 

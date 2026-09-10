@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -59,7 +60,7 @@ def ensure_update_is_safe() -> None:
 
 
 def dependency_python() -> Path:
-    venv_python = PROJECT_DIR / ".venv" / "Scripts" / "python.exe"
+    venv_python = PROJECT_DIR / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     return venv_python if venv_python.exists() else Path(sys.executable)
 
 

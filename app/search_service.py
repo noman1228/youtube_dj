@@ -6,6 +6,8 @@ from typing import Iterable
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
 from .models import Track
+from .runtime import javascript_runtimes
+from .youtube_runtime import configure_youtube_processes
 
 
 class SearchSignals(QObject):
@@ -43,6 +45,7 @@ class SearchTask(QRunnable):
     def _search_youtube(self) -> list[Track]:
         import yt_dlp
 
+        configure_youtube_processes()
         options = {
             "quiet": True,
             "no_warnings": True,
@@ -50,6 +53,7 @@ class SearchTask(QRunnable):
             "noplaylist": True,
             "extract_flat": True,
             "socket_timeout": 15,
+            "js_runtimes": javascript_runtimes(),
         }
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(f"ytsearch{self.limit}:{self.query}", download=False)

@@ -136,7 +136,7 @@ class BeatTransitionTest(unittest.TestCase):
         self.assertIn("BEAT 2/16", self.main.status.text())
         self.assertFalse(any(name == "rate" for name, _value in self.calls))
 
-    def test_incoming_deck_keeps_matched_tempo_after_mix(self) -> None:
+    def test_incoming_deck_restores_original_tempo_after_mix(self) -> None:
         self.source.beat_info = lambda: BeatInfo(120.0, 0, 0.9)
         self.target.beat_info = lambda: BeatInfo(100.0, 0, 0.9)
         self.main._beat_analysis_tick()
@@ -151,9 +151,11 @@ class BeatTransitionTest(unittest.TestCase):
         self.source.current_times = lambda: (10_000, 180_000)
         self.main._fade_tick()
 
-        self.assertFalse(any(name == "rate" for name, _value in self.calls))
+        self.assertEqual([call for call in self.calls if call[0] == "rate"], [("rate", 1.0)])
         self.assertEqual(self.main.crossfader.value(), self.main._CROSSFADER_MAX)
-        self.assertIn("TEMPO HELD", self.main.status.text())
+        self.assertIn("ORIGINAL TEMPO", self.main.status.text())
+        self.main._fade_tick()
+        self.assertEqual([call for call in self.calls if call[0] == "rate"], [("rate", 1.0)])
 
     def test_preparing_incoming_media_does_not_expire_analysis_start(self) -> None:
         self.main._beat_analysis_started = 0.0

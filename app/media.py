@@ -24,6 +24,8 @@ from PySide6.QtMultimedia import (
 from .beat import BeatInfo, BeatTracker
 from .hls import HlsPlaylistServer, HlsVideoSource, select_hls_video
 from .models import Track
+from .runtime import javascript_runtimes
+from .youtube_runtime import configure_youtube_processes
 from .media_cache import prepare_media
 from .waveform_analysis import WaveformJob, waveform_analysis, waveform_key
 
@@ -103,6 +105,7 @@ class ResolveTask(QRunnable):
             import yt_dlp
             from yt_dlp.networking import Request
 
+            configure_youtube_processes()
             options: Any = {
                 "quiet": True,
                 "no_warnings": False,
@@ -118,9 +121,9 @@ class ResolveTask(QRunnable):
                 "skip_unavailable_fragments": False,
                 "concurrent_fragment_downloads": 1,
                 "progress_hooks": [self._check_cancelled],
-                # yt-dlp enables only Deno by default; support the Node.js
-                # installation documented for this app as well.
-                "js_runtimes": {"deno": {}, "node": {}},
+                # Find the environment's Deno even without shell activation;
+                # also support an existing Node.js installation.
+                "js_runtimes": javascript_runtimes(),
             }
             directory = tempfile.TemporaryDirectory(prefix="encoremix-", ignore_cleanup_errors=True)
             with yt_dlp.YoutubeDL(options) as ydl:

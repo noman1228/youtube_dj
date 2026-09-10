@@ -24,11 +24,13 @@ def lower_priority() -> None:
 
 def main() -> int:
     lower_priority()
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from app.runtime import configure_playback
+    configure_playback()
     # Import Qt after lowering priority, including its decoder threads.
     from PySide6.QtCore import QCoreApplication, QTimer, QUrl
     from PySide6.QtMultimedia import QAudioDecoder, QAudioFormat
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from app.waveform_analysis import BIN_COUNT, valid_waveform
 
     source, cache_path = map(Path, sys.argv[1:3])
