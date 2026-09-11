@@ -1,3 +1,72 @@
+import re
+
+from PySide6.QtCore import QSettings
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QApplication
+
+
+THEMES = {
+    "Midnight": {},
+    "Graphite": {
+        "#0b0e14": "#191919", "#080b10": "#121212", "#111722": "#242424",
+        "#0c111a": "#1c1c1c", "#1a2433": "#303030", "#1b2535": "#343434",
+        "#172033": "#292929", "#253249": "#414141", "#263247": "#454545",
+        "#34445f": "#505050", "#33435d": "#505050", "#29364c": "#454545",
+        "#253147": "#414141", "#e8edf7": "#f0f0f0", "#8f9db2": "#b0b0b0",
+    },
+    "Deep Ocean": {
+        "#0b0e14": "#071c22", "#080b10": "#041419", "#111722": "#0d2931",
+        "#0c111a": "#092129", "#1a2433": "#163943", "#1b2535": "#193d47",
+        "#172033": "#102f38", "#253249": "#24505c", "#263247": "#29505b",
+        "#34445f": "#35616d", "#33435d": "#35616d", "#29364c": "#29505b",
+        "#253147": "#24505c", "#e8edf7": "#e3f3f5", "#8f9db2": "#95b7bf",
+    },
+}
+DEFAULT_APPEARANCE = {"theme": "Midnight", "left": "#00d8ff", "right": "#ff2fa7"}
+
+
+def load_appearance() -> dict[str, str]:
+    settings = QSettings()
+    result = dict(DEFAULT_APPEARANCE)
+    name = settings.value("appearance/theme", result["theme"])
+    if name in THEMES:
+        result["theme"] = name
+    for side in ("left", "right"):
+        color = QColor(str(settings.value(f"appearance/{side}", result[side])))
+        if color.isValid():
+            result[side] = color.name()
+    return result
+
+
+def apply_appearance(preferences: dict[str, str], *, save: bool = False) -> None:
+    app = QApplication.instance()
+    colors = dict(THEMES[preferences["theme"]])
+    colors.update({
+        "#00d8ff": preferences["left"], "#ff2fa7": preferences["right"],
+        "#006f84": QColor(preferences["left"]).darker(220).name(),
+        "#7b1552": QColor(preferences["right"]).darker(220).name(),
+    })
+
+    def recolor(style: str) -> str:
+        return re.sub(r"#[0-9a-fA-F]{6}\b", lambda match: colors.get(match[0].lower(), match[0]), style)
+
+    app.setProperty("appearance", dict(preferences))
+    app.setStyleSheet(recolor(APP_STYLE))
+    for widget in app.allWidgets():
+        original = widget.property("originalAppearanceStyle")
+        if original is None and widget.styleSheet():
+            original = widget.styleSheet()
+            widget.setProperty("originalAppearanceStyle", original)
+        if original:
+            widget.setStyleSheet(recolor(original))
+        widget.update()
+    if save:
+        settings = QSettings()
+        for key, value in preferences.items():
+            settings.setValue(f"appearance/{key}", value)
+        settings.sync()
+
+
 APP_STYLE = r"""
 QWidget {
     background: #0b0e14;

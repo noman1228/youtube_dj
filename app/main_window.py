@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTimer, Qt
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -32,6 +32,7 @@ from .beat import (
     normalized_target_bpm,
     phase_error_cycles,
 )
+from .appearance_dialog import AppearanceDialog, AppearanceShortcut
 from .deck_widget import DeckWidget
 from .karaoke_window import KaraokeWindow
 from .logo_pulse import LogoPulseController
@@ -50,6 +51,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("EncoreMix - MAIN")
         self.resize(1550, 900)
         self.setMinimumSize(1180, 720)
+        self._fullscreen_was_maximized = False
+        self._appearance_dialog: AppearanceDialog | None = None
+        self._appearance_shortcut = AppearanceShortcut(self)
+        self._appearance_shortcut.activated.connect(self._open_appearance)
+
+        self._fullscreen_shortcut = QShortcut(QKeySequence("F11"), self)
+        self._fullscreen_shortcut.setAutoRepeat(False)
+        self._fullscreen_shortcut.activated.connect(self._toggle_fullscreen)
+        self._exit_fullscreen_shortcut = QShortcut(QKeySequence("Escape"), self)
+        self._exit_fullscreen_shortcut.setEnabled(False)
+        self._exit_fullscreen_shortcut.activated.connect(self._exit_fullscreen)
 
         self._search_dialog: SearchDialog | None = None
         self._karaoke_window: KaraokeWindow | None = None
@@ -101,6 +113,12 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(16, 18, 16, 18)
         center_layout.setSpacing(14)
+        self.fullscreen_button = QPushButton("FULL SCREEN")
+        self.fullscreen_button.setCheckable(True)
+        self.fullscreen_button.setProperty("compactControl", True)
+        self.fullscreen_button.setToolTip("F11: toggle fullscreen · Esc: exit fullscreen")
+        self.fullscreen_button.clicked.connect(self._toggle_fullscreen)
+        center_layout.addWidget(self.fullscreen_button)
         center_controls = QWidget()
         center_controls.setObjectName("CenterControls")
         controls_layout = QVBoxLayout(center_controls)
@@ -331,6 +349,35 @@ class MainWindow(QMainWindow):
         self._apply_crossfader(self._CROSSFADER_MAX // 2)
         self._sync_fade_mode_controls()
         QTimer.singleShot(0, self._load_playlists)
+
+    def _open_appearance(self) -> None:
+        if self._appearance_dialog is None:
+            self._appearance_dialog = AppearanceDialog(self)
+        self._appearance_dialog.show()
+        self._appearance_dialog.raise_()
+        self._appearance_dialog.activateWindow()
+
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self._exit_fullscreen()
+        else:
+            self._fullscreen_was_maximized = self.isMaximized()
+            self.showFullScreen()
+
+    def _exit_fullscreen(self) -> None:
+        if self.isFullScreen():
+            if self._fullscreen_was_maximized:
+                self.showMaximized()
+            else:
+                self.showNormal()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "fullscreen_button"):
+            fullscreen = self.isFullScreen()
+            self.fullscreen_button.setChecked(fullscreen)
+            self.fullscreen_button.setText("EXIT FULL SCREEN" if fullscreen else "FULL SCREEN")
+            self._exit_fullscreen_shortcut.setEnabled(fullscreen)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         # Playback controls must not activate on Return or numeric-keypad Enter.

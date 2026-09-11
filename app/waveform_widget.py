@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from typing import cast
+
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPen
-from PySide6.QtWidgets import QSizePolicy, QWidget
+from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
 
 from .waveform_analysis import valid_waveform
 
@@ -17,6 +19,7 @@ class WaveformWidget(QWidget):
     def __init__(self, side: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._accent = QColor("#00d8ff" if side == "left" else "#ff2fa7")
+        self._side = side
         self._levels = [0.0] * self._BIN_COUNT
         self._known = [False] * self._BIN_COUNT
         self._samples: list[tuple[int, float]] = []
@@ -28,7 +31,7 @@ class WaveformWidget(QWidget):
         self.setMaximumHeight(82)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Waveform prepares in the background, with live playback as a fallback. Click or drag to seek.")
+        self.setToolTip("Click or drag to seek.")
 
     def sizeHint(self) -> QSize:
         return QSize(320, 72)
@@ -46,10 +49,11 @@ class WaveformWidget(QWidget):
     def set_overview(self, data: object) -> None:
         if not valid_waveform(data):
             return
-        self._overview = list(data["levels"])
+        waveform = cast(dict[str, object], data)
+        self._overview = list(cast(list[float], waveform["levels"]))
         self._samples.clear()
         if not self._duration_ms:
-            self._duration_ms = data["duration_ms"]
+            self._duration_ms = cast(int, waveform["duration_ms"])
         self._rebuild()
         self.update()
 
@@ -96,6 +100,9 @@ class WaveformWidget(QWidget):
                 self._place_sample(*sample)
 
     def paintEvent(self, _event: QPaintEvent) -> None:
+        application = QApplication.instance()
+        appearance = application.property("appearance") if application else {}
+        self._accent = QColor(appearance.get(self._side, self._accent))
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         painter.fillRect(self.rect(), QColor("#080b10"))

@@ -76,6 +76,16 @@ python -m pip install --upgrade "yt-dlp[default,deno]"
 python main.py
 ```
 
+## Appearance
+
+Press **Shift+/** (**?**) on the main screen to open Appearance, including while
+fullscreen. Choose Midnight, Graphite, or Deep Ocean and customize the left/UI
+accent and right deck colors. Changes apply immediately and are saved for the
+next launch. **Reset to defaults** restores the original colors.
+
+Use the main screen's **FULL SCREEN** button or **F11** for borderless fullscreen;
+**Esc** restores the previous window mode.
+
 ## Updating
 
 Close EncoreMix, then run the standalone updater from the project folder:
