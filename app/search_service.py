@@ -10,6 +10,11 @@ from .runtime import javascript_runtimes
 from .youtube_runtime import configure_youtube_processes
 
 
+def _release_year(value: object) -> str:
+    text = str(value or "")
+    return text[:4] if text[:4].isdigit() else ""
+
+
 class SearchSignals(QObject):
     result = Signal(int, object)
     finished = Signal(int, str)
@@ -78,6 +83,8 @@ class SearchTask(QRunnable):
                     thumbnail_url=_thumbnail_url(entry, video_id),
                     uploader=entry.get("channel") or entry.get("uploader") or "",
                     duration_seconds=_safe_int(entry.get("duration")),
+                    album=entry.get("album") or "",
+                    year=_release_year(entry.get("release_year") or entry.get("release_date")),
                 )
             )
         return tracks
@@ -96,6 +103,7 @@ class SearchTask(QRunnable):
                 artist.get("name", "") for artist in result.get("artists", []) if artist.get("name")
             )
             album = (result.get("album") or {}).get("name", "")
+            year = _release_year(result.get("year") or (result.get("album") or {}).get("year"))
             metadata = " • ".join(part for part in [artists, album, result.get("duration", "")] if part)
             thumbnails = result.get("thumbnails") or []
             thumbnail = thumbnails[-1].get("url", "") if thumbnails else ""
@@ -109,6 +117,8 @@ class SearchTask(QRunnable):
                     thumbnail_url=thumbnail,
                     uploader=artists,
                     duration_seconds=_safe_int(result.get("duration_seconds")) or _parse_duration(result.get("duration")),
+                    album=album,
+                    year=year,
                 )
             )
         return tracks

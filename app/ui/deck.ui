@@ -87,7 +87,7 @@
         <string>bpm_label</string>
        </property>
        <property name="runtimeObjectName" stdset="0">
-        <string>Subtle</string>
+           <string>ArtistLabel</string>
        </property>
       </widget>
      </item>
@@ -212,7 +212,7 @@ A TRACK</string>
           <string>meta_label</string>
          </property>
          <property name="runtimeObjectName" stdset="0">
-          <string>Subtle</string>
+          <string>ArtistLabel</string>
          </property>
         </widget>
        </item>

@@ -39,12 +39,14 @@ class AppearanceDialog(QDialog):
         self.theme_combo.clear()
         self.theme_combo.addItems(THEMES)
         self.theme_combo.setCurrentText(self.preferences["theme"])
+        self.karaoke_deck_shrink.setValue(int(self.preferences.get("karaoke_deck_shrink", 35)))
         self.color_buttons = {"left": ui.left_color_button, "right": ui.right_color_button}
         for side, button in self.color_buttons.items():
             button.clicked.connect(lambda _checked=False, side=side: self._choose_color(side))
         ui.reset_button.clicked.connect(self._reset)
         ui.buttons.rejected.connect(self.close)
         self.theme_combo.currentTextChanged.connect(self._theme_changed)
+        self.karaoke_deck_shrink.valueChanged.connect(self._shrink_changed)
         self._refresh_colors()
 
     def _refresh_colors(self) -> None:
@@ -59,6 +61,10 @@ class AppearanceDialog(QDialog):
         self.preferences["theme"] = theme
         apply_appearance(self.preferences, save=True)
 
+    def _shrink_changed(self, value: int) -> None:
+        self.preferences["karaoke_deck_shrink"] = value
+        apply_appearance(self.preferences, save=True)
+
     def _choose_color(self, side: str) -> None:
         color = QColorDialog.getColor(QColor(self.preferences[side]), self, f"Choose {side} color")
         if color.isValid():
@@ -69,5 +75,6 @@ class AppearanceDialog(QDialog):
     def _reset(self) -> None:
         self.preferences = dict(DEFAULT_APPEARANCE)
         self.theme_combo.setCurrentText(self.preferences["theme"])
+        self.karaoke_deck_shrink.setValue(self.preferences["karaoke_deck_shrink"])
         self._refresh_colors()
         apply_appearance(self.preferences, save=True)

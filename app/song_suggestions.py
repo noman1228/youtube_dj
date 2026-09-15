@@ -67,6 +67,7 @@ class SuggestionTask(QRunnable):
 
 class SongSuggestions(QFrame):
     addRequested = Signal(str, object)
+    resultsChanged = Signal(bool)
     _SETTLE_SECONDS = 15
 
     def __init__(self, context, parent=None) -> None:
@@ -165,6 +166,7 @@ class SongSuggestions(QFrame):
             )
         self.list.setVisible(self.list.count() > 0)
         self.status.setVisible(self.list.count() == 0)
+        self.resultsChanged.emit(bool(self.list.count()))
 
     def _menu_for_item(self, item: QListWidgetItem) -> None:
         track = item.data(Qt.ItemDataRole.UserRole)

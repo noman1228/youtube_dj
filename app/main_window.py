@@ -5,9 +5,10 @@ import math
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTime, QTimer, Qt
+from PySide6.QtCore import (QEvent, QObject, QParallelAnimationGroup, QPropertyAnimation,
+                            QSignalBlocker, QTime, QTimer, QVariantAnimation, Qt)
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import QListWidgetItem, QMainWindow, QMessageBox
+from PySide6.QtWidgets import QApplication, QListWidgetItem, QMainWindow, QMessageBox
 
 from .ui_loader import load_ui
 
@@ -79,6 +80,12 @@ class MainWindow(QMainWindow):
         self._beat_launch_in_progress = False
         self._beat_phase_settling = False
         self._last_triggered_side: str | None = None
+        self._karaoke_width_animation: QParallelAnimationGroup | None = None
+        self._karaoke_normal_left_width = 0
+        self._karaoke_normal_right_width = 0
+        self._karaoke_normal_suggestions_height = 0
+        self._karaoke_normal_preview_height = 112
+        self._suggestion_height_animation: QPropertyAnimation | None = None
 
         ui = load_ui(self, "main_window.ui", {
             "DeckWidget": lambda parent, name: DeckWidget(name, parent),
@@ -86,6 +93,8 @@ class MainWindow(QMainWindow):
             "SongSuggestions": lambda parent, _name: SongSuggestions(self._suggestion_context, parent),
             "SymmetricScrollArea": lambda parent, _name: SymmetricScrollArea(parent),
         })
+        self.center = ui.center
+        self._suggestion_visible_height = self.song_suggestions.sizeHint().height()
         ui.controls_scroll.viewport().setObjectName("CenterControlsViewport")
         self._clock_timer = QTimer(self)
         self._clock_timer.setInterval(1000)
@@ -97,6 +106,7 @@ class MainWindow(QMainWindow):
         ui.center_button.clicked.connect(lambda: self.crossfader.setValue(self._CROSSFADER_MAX // 2))
         ui.cut_right.clicked.connect(lambda: self.crossfader.setValue(self._CROSSFADER_MAX))
         self.song_suggestions.addRequested.connect(self._add_suggestion)
+        self.song_suggestions.resultsChanged.connect(self._sync_suggestions_layout)
         for deck in (self.left, self.right):
             deck.installEventFilter(self)
         self._sync_deck_header_layout()
@@ -164,6 +174,27 @@ class MainWindow(QMainWindow):
 
     def _update_clock(self) -> None:
         self.clock_display.setText(QTime.currentTime().toString("h:mm:ss AP"))
+
+    def _sync_suggestions_layout(self, has_results: bool) -> None:
+        target = self.song_suggestions.sizeHint().height() if has_results else self.song_suggestions.sizeHint().height()
+        if self.karaoke_remote.property("playing"):
+            self._karaoke_normal_suggestions_height = target
+            return
+        if self._suggestion_height_animation is not None:
+            self._suggestion_height_animation.stop()
+        current = self._suggestion_visible_height
+        self.song_suggestions.setMaximumHeight(current)
+        animation = QPropertyAnimation(self.song_suggestions, b"maximumHeight", self)
+        animation.setDuration(300)
+        animation.setStartValue(current)
+        animation.setEndValue(target)
+        def finish_suggestions_animation() -> None:
+            self.song_suggestions.setMaximumHeight(target)
+            self._suggestion_visible_height = target
+
+        animation.finished.connect(finish_suggestions_animation)
+        self._suggestion_height_animation = animation
+        animation.start()
 
     def _open_appearance(self) -> None:
         if self._appearance_dialog is None:
@@ -298,6 +329,7 @@ class MainWindow(QMainWindow):
         playing = bool(self._karaoke_window and self._karaoke_window.engine.is_playing())
         if playing == self.karaoke_remote.property("playing"):
             return
+        self._animate_karaoke_layout(playing)
         self.karaoke_remote.setProperty("playing", playing)
         self.karaoke_remote.setProperty("flashOn", playing)
         self.karaoke_remote_title.setText("KARAOKE PLAYING" if playing else "KARAOKE REMOTE")
@@ -306,6 +338,90 @@ class MainWindow(QMainWindow):
         else:
             self._karaoke_blink_timer.stop()
         self._refresh_karaoke_highlight()
+
+    def _animate_karaoke_layout(self, playing: bool) -> None:
+        if self._karaoke_width_animation is not None:
+            self._karaoke_width_animation.stop()
+        for deck in (self.left, self.right):
+            deck.set_karaoke_compact(playing)
+        current_deck_width = self.left.width()
+        current_right_width = self.right.width()
+        current_center_width = self.center.width()
+        shrink = int((QApplication.instance().property("appearance") or {}).get(
+            "karaoke_deck_shrink", 35
+        )) / 100
+        target_left_width = round(current_deck_width * (1 - shrink)) if playing else self._karaoke_normal_left_width
+        target_right_width = round(current_right_width * (1 - shrink)) if playing else self._karaoke_normal_right_width
+        target_center_width = (current_center_width + current_deck_width - target_left_width
+                               + current_right_width - target_right_width)
+        if not playing:
+            target_center_width = self._karaoke_normal_center_width
+        else:
+            self._karaoke_normal_left_width = current_deck_width
+            self._karaoke_normal_right_width = current_right_width
+            self._karaoke_normal_center_width = current_center_width
+        group = QParallelAnimationGroup(self)
+        start_widths = (current_deck_width, current_right_width, current_center_width)
+        target_widths = (target_left_width, target_right_width, target_center_width)
+        widths = QVariantAnimation(group)
+        widths.setDuration(450)
+        widths.setStartValue(0.0)
+        widths.setEndValue(1.0)
+
+        def update_widths(progress: object) -> None:
+            fraction = float(progress)
+            values = tuple(round(start + (target - start) * fraction)
+                           for start, target in zip(start_widths, target_widths))
+            self.left.setFixedWidth(values[0])
+            self.right.setFixedWidth(values[1])
+            self.center.setFixedWidth(values[2])
+            for widget in (self.left, self.right, self.center, self.karaoke_remote):
+                layout = widget.layout()
+                if layout is not None:
+                    layout.activate()
+                widget.updateGeometry()
+
+        widths.valueChanged.connect(update_widths)
+        group.addAnimation(widths)
+        preview_height = self.projector_preview.height()
+        if playing:
+            self._karaoke_normal_preview_height = preview_height
+            self._karaoke_normal_suggestions_height = self._suggestion_visible_height
+            playlist_height = self.karaoke_playlist.height()
+            target_preview_height = preview_height + max(0, playlist_height - self.karaoke_playlist.minimumHeight())
+            target_preview_height += self._karaoke_normal_suggestions_height
+            suggestions_target = 0
+        else:
+            target_preview_height = self._karaoke_normal_preview_height
+            suggestions_target = self._karaoke_normal_suggestions_height
+        suggestions = QPropertyAnimation(self.song_suggestions, b"maximumHeight", group)
+        suggestions.setDuration(450)
+        suggestions.setStartValue(self.song_suggestions.height())
+        suggestions.setEndValue(suggestions_target)
+        group.addAnimation(suggestions)
+        for property_name in (b"minimumHeight", b"maximumHeight"):
+            preview = QPropertyAnimation(self.projector_preview, property_name, group)
+            preview.setDuration(450)
+            preview.setStartValue(self.projector_preview.height())
+            preview.setEndValue(target_preview_height)
+            group.addAnimation(preview)
+
+        def release_widths() -> None:
+            if playing:
+                self.left.setFixedWidth(target_left_width)
+                self.right.setFixedWidth(target_right_width)
+                self.center.setFixedWidth(target_center_width)
+            else:
+                self.left.setFixedWidth(target_left_width)
+                self.right.setFixedWidth(target_right_width)
+                self.center.setFixedWidth(target_center_width)
+                self._suggestion_visible_height = suggestions_target
+                for deck in (self.left, self.right):
+                    deck.set_karaoke_compact(False)
+
+        group.finished.connect(release_widths)
+        self._karaoke_width_animation = group
+        group.start()
 
     def _blink_karaoke_remote(self) -> None:
         self._sync_karaoke_playback()
@@ -319,6 +435,11 @@ class MainWindow(QMainWindow):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
             widget.update()
+        layout = self.karaoke_remote.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        self.karaoke_remote.updateGeometry()
 
     def _sync_karaoke_playlist(self) -> None:
         karaoke = self._karaoke_window

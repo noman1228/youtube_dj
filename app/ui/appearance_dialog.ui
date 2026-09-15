@@ -166,6 +166,35 @@ and are saved automatically.</string>
        </property>
       </widget>
      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="karaoke_shrink_label">
+        <property name="text">
+         <string>Karaoke deck shrink</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QSpinBox" name="karaoke_deck_shrink">
+        <property name="suffix">
+         <string> %</string>
+        </property>
+        <property name="minimum">
+         <number>0</number>
+        </property>
+        <property name="maximum">
+         <number>60</number>
+        </property>
+        <property name="value">
+         <number>35</number>
+        </property>
+        <property name="toolTip">
+         <string>How much each deck narrows while karaoke is playing.</string>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>karaoke_deck_shrink</string>
+        </property>
+       </widget>
+      </item>
     </layout>
    </item>
    <item>

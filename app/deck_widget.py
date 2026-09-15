@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, Qt, QUrl, Signal
+from PySide6.QtCore import QByteArray, QEvent, Qt, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import QFileDialog, QFrame, QListWidgetItem, QMessageBox, QWidget
@@ -52,6 +52,9 @@ class DeckWidget(QFrame):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
         self.playlist.model().rowsMoved.connect(self._sync_order_from_widget)
+        self.playlist.setProperty("deck_side", side)
+        self.playlist.installEventFilter(self)
+        self.playlist.viewport().installEventFilter(self)
 
         self.engine.stateChanged.connect(self._state_changed)
         self.engine.positionChanged.connect(self._position_changed)
@@ -77,6 +80,45 @@ class DeckWidget(QFrame):
         self.progress.sliderPressed.connect(lambda: setattr(self, "_seeking", True))
         self.progress.sliderReleased.connect(self._seek_released)
         self.waveform.seekRequested.connect(self.engine.seek_fraction)
+
+    def set_karaoke_compact(self, enabled: bool) -> None:
+        """Keep the deck controls inside a temporarily narrow karaoke deck."""
+        for widget in (
+            self.vu_meter, self.bpm_label, self.state_label,
+            self.search_button, self.local_button,
+            self.play_on_double_click, self.move_button, self.reenable_button,
+        ):
+            widget.setVisible(not enabled)
+        self.playlist_header.set_two_rows(not enabled)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched in (self.playlist, self.playlist.viewport()):
+            if event.type() == QEvent.Type.KeyPress and event.key() in (
+                Qt.Key.Key_Delete, Qt.Key.Key_Backspace,
+            ):
+                self.remove_selected()
+                event.accept()
+                return True
+            if (event.type() == QEvent.Type.MouseButtonDblClick
+                    and event.button() == Qt.MouseButton.RightButton):
+                self.remove_selected()
+                event.accept()
+                return True
+        if watched in (self.playlist, self.playlist.viewport()) and event.type() in (
+            QEvent.Type.DragEnter, QEvent.Type.DragMove, QEvent.Type.Drop,
+        ):
+            source = event.source()
+            source_side = source.property("deck_side") if source is not None else None
+            if source_side in ("left", "right") and source_side != self.side:
+                if event.type() == QEvent.Type.Drop:
+                    row = source.currentRow()
+                    if row >= 0:
+                        self.moveTrackRequested.emit(source_side, row)
+                    event.acceptProposedAction()
+                else:
+                    event.acceptProposedAction()
+                return True
+        return super().eventFilter(watched, event)
 
     def add_track(self, track: Track, load_if_empty: bool = True) -> None:
         self.tracks.append(track)
@@ -109,8 +151,7 @@ class DeckWidget(QFrame):
         self.waveform.reset(int(track.duration_seconds or 0) * 1000)
         self.vu_meter.reset()
         self.bpm_label.setText("BPM --")
-        self.title_label.setText(track.title)
-        self.meta_label.setText(" • ".join(part for part in [track.source, track.uploader, track.duration_text] if part))
+        self._set_track_labels(track)
         self._load_art(track.thumbnail_url)
         self.engine.load(track, autoplay=autoplay)
         self._prefetch_next()
@@ -218,7 +259,13 @@ class DeckWidget(QFrame):
         self.advance_to_next(autoplay=False)
 
     def _loaded(self, track: Track) -> None:
-        self.title_label.setText(track.title)
+        self._set_track_labels(track)
+
+    def _set_track_labels(self, track: Track) -> None:
+        title = " ".join(track.title.split()) or "Untitled"
+        artist = " ".join((track.uploader or "Unknown artist").split())
+        self.title_label.setText(title)
+        self.meta_label.setText(artist)
 
     def _state_changed(self, state: str) -> None:
         self.state_label.setText(state)

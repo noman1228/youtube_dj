@@ -22,7 +22,9 @@ THEMES = {
         "#253147": "#24505c", "#e8edf7": "#e3f3f5", "#8f9db2": "#95b7bf",
     },
 }
-DEFAULT_APPEARANCE = {"theme": "Midnight", "left": "#00d8ff", "right": "#ff2fa7"}
+DEFAULT_APPEARANCE = {
+    "theme": "Midnight", "left": "#00d8ff", "right": "#ff2fa7", "karaoke_deck_shrink": 35,
+}
 
 
 def load_appearance() -> dict[str, str]:
@@ -35,6 +37,12 @@ def load_appearance() -> dict[str, str]:
         color = QColor(str(settings.value(f"appearance/{side}", result[side])))
         if color.isValid():
             result[side] = color.name()
+    try:
+        result["karaoke_deck_shrink"] = max(0, min(60, int(
+            settings.value("appearance/karaoke_deck_shrink", result["karaoke_deck_shrink"])
+        )))
+    except (TypeError, ValueError):
+        pass
     return result
 
 
@@ -161,7 +169,8 @@ QLabel#DeckBadge {
     border-radius: 9px;
     background: #1b2535;
 }
-QLabel#TrackTitle { font-size: 15pt; font-weight: 750; }
+QLabel#TrackTitle { font-size: 17pt; font-weight: 750; }
+QLabel#ArtistLabel { color: #8f9db2; font-size: 11pt; font-weight: 600; }
 QLabel#Subtle { color: #8f9db2; }
 QLabel#TimeLabel { font-family: "Cascadia Mono", monospace; font-size: 11pt; }
 QPushButton {

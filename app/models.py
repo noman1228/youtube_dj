@@ -16,6 +16,8 @@ class Track:
     duration_seconds: int | None = None
     played: bool = False
     karaoke_artist: str = ""
+    album: str = ""
+    year: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
