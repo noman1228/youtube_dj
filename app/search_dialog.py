@@ -96,7 +96,7 @@ class SearchDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("YouTube / YouTube Music Search")
+        self.setWindowTitle("YouTube Music Search")
         self.setMinimumWidth(self._MINIMUM_WIDTH)
         self.setMaximumWidth(self._MAXIMUM_WIDTH)
         self.resize(860, 760)
@@ -113,6 +113,9 @@ class SearchDialog(QDialog):
         self._similar_side = ""
 
         ui = load_ui(self, "search_dialog.ui")
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
+        self.search_edit.setAccessibleName("Search YouTube Music")
         for side in ("left", "right"):
             getattr(ui, f"similar_{side}").clicked.connect(
                 lambda _checked=False, side=side: self.similarRequested.emit(side)
@@ -140,24 +143,19 @@ class SearchDialog(QDialog):
         self._similar_side = ""
         self._search_generation += 1
         generation = self._search_generation
-        self.status.setText(f"Searching {self.provider.currentText()} for “{query}”…")
+        self.status.setText(f"Searching YouTube Music for “{query}”…")
         self._clear_results()
         self._result_count = 0
         self._seen_results.clear()
         self._provider_errors.clear()
-        providers = (
-            ["YouTube", "YouTube Music"]
-            if self.provider.currentText() == "Both"
-            else [self.provider.currentText()]
-        )
-        self._pending_providers = len(providers)
-        for provider in providers:
-            task = SearchTask(query, provider, limit=self._result_limit, request_id=generation)
-            self._active_tasks[(generation, provider)] = task
-            task.signals.result.connect(self._append_result, Qt.ConnectionType.QueuedConnection)
-            task.signals.finished.connect(self._provider_finished, Qt.ConnectionType.QueuedConnection)
-            task.signals.failed.connect(self._provider_failed, Qt.ConnectionType.QueuedConnection)
-            self._pool.start(task)
+        self._pending_providers = 1
+        provider = "YouTube Music"
+        task = SearchTask(query, provider, limit=self._result_limit, request_id=generation)
+        self._active_tasks[(generation, provider)] = task
+        task.signals.result.connect(self._append_result, Qt.ConnectionType.QueuedConnection)
+        task.signals.finished.connect(self._provider_finished, Qt.ConnectionType.QueuedConnection)
+        task.signals.failed.connect(self._provider_failed, Qt.ConnectionType.QueuedConnection)
+        self._pool.start(task)
 
     def search_similar(self, track: Track, side: str, excluded: set[str]) -> None:
         self._search_generation += 1
@@ -229,10 +227,10 @@ class SearchDialog(QDialog):
             if self._similar_side:
                 self.status.setText(f"{self._result_count} recommendation(s) for {self._similar_side.upper()}. Click again for more; genre, era and popularity are approximate.")
             else:
-                suffix = " Some providers failed." if self._provider_errors else " Pick your poison."
+                suffix = " Search ended early." if self._provider_errors else " Add a track to either deck."
                 self.status.setText(f"{self._result_count} result(s).{suffix}")
         else:
-            self.status.setText("Search failed." if self._provider_errors else "No results found.")
+            self.status.setText("Search failed. Try again." if self._provider_errors else "No results found. Try another song or artist.")
             if self._provider_errors:
                 QMessageBox.critical(self, "Search failed", "\n".join(self._provider_errors))
 

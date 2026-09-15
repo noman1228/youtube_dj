@@ -170,6 +170,7 @@ class MainWindow(QMainWindow):
 
         self._apply_crossfader(self._CROSSFADER_MAX // 2)
         self._sync_fade_mode_controls()
+        self._get_karaoke_window()
         QTimer.singleShot(0, self._load_playlists)
 
     def _update_clock(self) -> None:

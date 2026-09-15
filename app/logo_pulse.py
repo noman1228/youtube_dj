@@ -41,7 +41,7 @@ class LogoPulseController(QObject):
         self._display.set_beat_pulse(0.0)
 
     def _tick(self) -> None:
-        if not self._display.isVisible() or not self._display.logo_visible:
+        if not self._display.logo_visible:
             self._timer.setInterval(250)
             self._display.set_beat_pulse(0.0)
             self._source = None

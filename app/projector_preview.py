@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
+from PySide6.QtCore import QPoint, QRectF, QTimer
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget
 
@@ -20,6 +20,9 @@ class ProjectorPreview(QWidget):
 
     def set_source(self, source: QWidget) -> None:
         self._source = source
+        # Establish the output geometry even before its window is first shown.
+        source.window().ensurePolished()
+        source.window().layout().activate()
         self.update()
 
     def showEvent(self, event) -> None:
@@ -41,9 +44,7 @@ class ProjectorPreview(QWidget):
         monitor = QRectF(self.rect())
         painter.fillRect(monitor, QColor("#000000"))
         source = self._source
-        if source is None or not source.isVisible():
-            painter.drawText(monitor, Qt.AlignmentFlag.AlignCenter, "PROJECTOR CLOSED")
-        else:
+        if source is not None:
             scale = min(monitor.width() / max(1, source.width()), monitor.height() / max(1, source.height()))
             painter.save()
             painter.setClipRect(monitor)
@@ -51,7 +52,8 @@ class ProjectorPreview(QWidget):
                               monitor.center().y() - source.height() * scale / 2)
             painter.scale(scale, scale)
             # QWidget.render redirects painting into this small target, keeping
-            # video, logo animation and text identical to the projector.
+            # video, logo animation and text identical to the projector, even
+            # while its window is hidden.
             source.render(painter, QPoint())
             painter.restore()
         painter.setPen(QColor("#34445f"))

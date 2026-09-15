@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <ui version="4.0">
  <class>search_dialog</class>
  <widget class="QDialog" name="search_dialog">
@@ -22,10 +22,7 @@
     <height>16777215</height>
    </size>
   </property>
-  <property name="windowTitle">
-   <string>YouTube / YouTube Music Search</string>
-  </property>
-  <layout class="QVBoxLayout" name="root" stretch="0,0,0,0,1">
+  <layout class="QVBoxLayout" name="root" stretch="0,0,0,0,0,1">
    <property name="spacing">
     <number>12</number>
    </property>
@@ -46,25 +43,26 @@
    </property>
    <item>
     <widget class="QLabel" name="header">
-     <property name="mouseTracking">
-      <bool>true</bool>
-     </property>
-     <property name="autoFillBackground">
-      <bool>true</bool>
-     </property>
-     <property name="styleSheet">
-      <string notr="true">alternate-background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgba(0, 0, 0, 255), stop:1 rgba(255, 255, 255, 255));</string>
-     </property>
-     <property name="text">
-      <string>SEARCH FOR TRACK</string>
-     </property>
      <property name="runtimeObjectName" stdset="0">
       <string>AppTitle</string>
+     </property>
+     <property name="text">
+      <string>FIND YOUR NEXT TRACK</string>
      </property>
     </widget>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="controls" stretch="1,0,0">
+    <widget class="QLabel" name="subtitle">
+     <property name="text">
+      <string>Search YouTube Music and build your next set.</string>
+     </property>
+     <property name="runtimeObjectName" stdset="0">
+      <string>Subtle</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="controls" stretch="1,0">
      <property name="spacing">
       <number>12</number>
      </property>
@@ -85,30 +83,15 @@
      </property>
      <item>
       <widget class="QLineEdit" name="search_edit">
-       <property name="placeholderText">
-        <string>Artist, song, remix, live version…</string>
-       </property>
        <property name="pythonAttribute" stdset="0">
         <string>search_edit</string>
        </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="provider">
-       <property name="currentText">
-        <string>YouTube Music</string>
+       <property name="clearButtonEnabled">
+        <bool>true</bool>
        </property>
-       <property name="currentIndex">
-        <number>0</number>
+       <property name="placeholderText">
+        <string>Search songs, artists, albums?</string>
        </property>
-       <property name="pythonAttribute" stdset="0">
-        <string>provider</string>
-       </property>
-       <item>
-        <property name="text">
-         <string>YouTube Music</string>
-        </property>
-       </item>
       </widget>
      </item>
      <item>
@@ -116,21 +99,21 @@
        <property name="text">
         <string>SEARCH</string>
        </property>
-       <property name="autoDefault">
-        <bool>true</bool>
-       </property>
        <property name="pythonAttribute" stdset="0">
         <string>search_button</string>
        </property>
        <property name="runtimeObjectName" stdset="0">
         <string>PrimaryButton</string>
        </property>
+       <property name="autoDefault">
+        <bool>false</bool>
+       </property>
       </widget>
      </item>
     </layout>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="similar_controls" stretch="0,0">
+    <layout class="QHBoxLayout" name="similar_controls" stretch="1,0,0">
      <property name="spacing">
       <number>12</number>
      </property>
@@ -150,15 +133,25 @@
       <number>0</number>
      </property>
      <item>
+      <widget class="QLabel" name="similar_label">
+       <property name="text">
+        <string>DISCOVER SIMILAR TRACKS</string>
+       </property>
+       <property name="runtimeObjectName" stdset="0">
+        <string>Subtle</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QPushButton" name="similar_left">
        <property name="toolTip">
         <string>Find 10 random related songs using this deck's current track. Era and popularity matching depends on available metadata.</string>
        </property>
-       <property name="text">
-        <string>SIMILAR TO LEFT</string>
-       </property>
        <property name="runtimeObjectName" stdset="0">
         <string>PrimaryButton</string>
+       </property>
+       <property name="text">
+        <string>FROM LEFT</string>
        </property>
       </widget>
      </item>
@@ -167,11 +160,11 @@
        <property name="toolTip">
         <string>Find 10 random related songs using this deck's current track. Era and popularity matching depends on available metadata.</string>
        </property>
-       <property name="text">
-        <string>SIMILAR TO RIGHT</string>
-       </property>
        <property name="runtimeObjectName" stdset="0">
         <string>HotButton</string>
+       </property>
+       <property name="text">
+        <string>FROM RIGHT</string>
        </property>
       </widget>
      </item>
@@ -179,9 +172,6 @@
    </item>
    <item>
     <widget class="QLabel" name="status">
-     <property name="text">
-      <string>Enter a search term. Results can be sent directly to either deck.</string>
-     </property>
      <property name="wordWrap">
       <bool>true</bool>
      </property>
@@ -190,6 +180,9 @@
      </property>
      <property name="runtimeObjectName" stdset="0">
       <string>Subtle</string>
+     </property>
+     <property name="text">
+      <string>Search for a song or artist, or discover tracks related to either deck.</string>
      </property>
     </widget>
    </item>
@@ -253,7 +246,13 @@
     </widget>
    </item>
   </layout>
+  <property name="windowTitle">
+   <string>YouTube Music Search</string>
+  </property>
+  <property name="styleSheet">
+   <string>QDialog#search_dialog QLabel#TrackTitle { font-size: 14pt; } QDialog#search_dialog QWidget#results_widget { background: transparent; }</string>
+  </property>
  </widget>
- <resources/>
- <connections/>
+ <resources />
+ <connections />
 </ui>
