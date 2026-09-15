@@ -153,9 +153,9 @@
             <property name="runtimeObjectName" stdset="0">
              <string>CenterControls</string>
             </property>
-            <layout class="QVBoxLayout" name="controls_layout" stretch="0,1,0">
+            <layout class="QVBoxLayout" name="controls_layout" stretch="0,0,1,0">
              <property name="spacing">
-              <number>6</number>
+                            <number>12</number>
              </property>
              <property name="sizeConstraint">
               <enum>SetDefaultConstraint</enum>
@@ -172,6 +172,80 @@
              <property name="bottomMargin">
               <number>2</number>
              </property>
+             <item>
+              <widget class="QFrame" name="clock_panel">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>56</height>
+                </size>
+               </property>
+               <property name="pythonAttribute" stdset="0">
+                <string>clock_panel</string>
+               </property>
+               <property name="runtimeObjectName" stdset="0">
+                <string>ClockPanel</string>
+               </property>
+               <layout class="QVBoxLayout" name="clock_layout">
+                <property name="spacing">
+                 <number>2</number>
+                </property>
+                <property name="leftMargin">
+                 <number>6</number>
+                </property>
+                <property name="topMargin">
+                 <number>6</number>
+                </property>
+                <property name="rightMargin">
+                 <number>6</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>6</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="clock_title">
+                  <property name="text">
+                   <string>LOCAL TIME</string>
+                  </property>
+                  <property name="alignment">
+                   <set>AlignCenter</set>
+                  </property>
+                  <property name="runtimeObjectName" stdset="0">
+                   <string>ConsoleSectionTitle</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="clock_display">
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
+                  </property>
+                  <property name="minimumSize">
+                   <size>
+                    <width>0</width>
+                    <height>24</height>
+                   </size>
+                  </property>
+                  <property name="text">
+                   <string>12:00:00 AM</string>
+                  </property>
+                  <property name="alignment">
+                   <set>AlignCenter</set>
+                  </property>
+                  <property name="pythonAttribute" stdset="0">
+                   <string>clock_display</string>
+                  </property>
+                  <property name="runtimeObjectName" stdset="0">
+                   <string>ClockDisplay</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
              <item>
               <widget class="QFrame" name="mix_group">
                <property name="runtimeObjectName" stdset="0">

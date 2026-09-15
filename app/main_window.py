@@ -5,7 +5,7 @@ import math
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTimer, Qt
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTime, QTimer, Qt
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import QListWidgetItem, QMainWindow, QMessageBox
 
@@ -87,6 +87,11 @@ class MainWindow(QMainWindow):
             "SymmetricScrollArea": lambda parent, _name: SymmetricScrollArea(parent),
         })
         ui.controls_scroll.viewport().setObjectName("CenterControlsViewport")
+        self._clock_timer = QTimer(self)
+        self._clock_timer.setInterval(1000)
+        self._clock_timer.timeout.connect(self._update_clock)
+        self._update_clock()
+        self._clock_timer.start()
         self.fullscreen_button.clicked.connect(self._toggle_fullscreen)
         ui.cut_left.clicked.connect(lambda: self.crossfader.setValue(0))
         ui.center_button.clicked.connect(lambda: self.crossfader.setValue(self._CROSSFADER_MAX // 2))
@@ -156,6 +161,9 @@ class MainWindow(QMainWindow):
         self._apply_crossfader(self._CROSSFADER_MAX // 2)
         self._sync_fade_mode_controls()
         QTimer.singleShot(0, self._load_playlists)
+
+    def _update_clock(self) -> None:
+        self.clock_display.setText(QTime.currentTime().toString("h:mm:ss AP"))
 
     def _open_appearance(self) -> None:
         if self._appearance_dialog is None:

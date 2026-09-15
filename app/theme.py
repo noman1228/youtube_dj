@@ -96,6 +96,20 @@ QFrame#MixControls {
     border-top: 3px solid #00d8ff;
     border-radius: 12px;
 }
+QFrame#ClockPanel {
+    background: #111722;
+    border: 3px solid #263247;
+    border-top: 3px solid #00d8ff;
+    border-radius: 12px;
+}
+QLabel#ClockDisplay {
+    background: transparent;
+    color: #e8edf7;
+    font-family: "Cascadia Mono", monospace;
+    font-size: 16pt;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
 QLabel#ConsoleSectionTitle {
     color: #00d8ff;
     font-size: 11pt;

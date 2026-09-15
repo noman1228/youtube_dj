@@ -47,6 +47,10 @@ class CenterLayoutTest(unittest.TestCase):
 
     def test_resizing_preserves_equal_decks_and_contains_grouped_controls(self) -> None:
         mix = self.main.findChild(QFrame, "MixControls")
+        clock = self.main.findChild(QFrame, "ClockPanel")
+        self.assertIs(clock, self.main.clock_panel)
+        self.assertTrue(clock.isAncestorOf(self.main.clock_display))
+        self.assertRegex(self.main.clock_display.text(), r"^\d{1,2}:\d{2}:\d{2} (AM|PM)$")
         self.assertTrue(mix.isAncestorOf(self.main.crossfader))
         self.assertTrue(self.main.karaoke_remote.isAncestorOf(self.main.projector_preview))
         for width, height in ((1180, 720), (1550, 900), (1920, 1080), (1180, 720)):
@@ -59,7 +63,7 @@ class CenterLayoutTest(unittest.TestCase):
                     self.assertLess(self.main.left.geometry().right(), self.center.x())
                     self.assertLess(self.center.geometry().right(), self.main.right.x())
                     self.assertLessEqual(self.scroll.widget().width(), self.scroll.viewport().width())
-                    for group in (mix, self.main.karaoke_remote):
+                    for group in (clock, mix, self.main.karaoke_remote):
                         for child in group.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
                             if child.isVisible():
                                 self.assertTrue(group.rect().contains(child.geometry()), child.objectName())
