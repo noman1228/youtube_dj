@@ -212,6 +212,7 @@ The karaoke deck is intentionally isolated from the two-deck Auto Mix bus. Futur
 - Singer queue and key-change controls
 - Key analysis, persistent beat-grid editing, waveform caching, cue points, loops, and transition previewing
 
+<<<<<<< HEAD
 ## Screenshots
 
 The screenshots below show the main mixer, the karaoke monitor while playing,
@@ -224,5 +225,14 @@ the search workflow, and the appearance controls.
 ![EncoreMix search and related-song workflow](https://github.com/user-attachments/assets/5b3d180f-5330-4637-b334-1c0cf7bdead9)
 
 ![EncoreMix appearance and theme controls](https://github.com/user-attachments/assets/b4a578dc-e22c-4224-902a-df4307647d08)
+=======
+<img width="1402" height="882" alt="image" src="https://github.com/user-attachments/assets/3c148e65-8fa7-4138-9a4e-cf8959c2aa20" />
+<img width="1600" height="900" alt="image" src="https://github.com/user-attachments/assets/728ac63f-bde8-4e67-96a9-0ac9b1802431" />
+<img width="1920" height="1032" alt="image" src="https://github.com/user-attachments/assets/d722fa7b-f704-4ced-86bf-1f489a8008c1" />\
+<img width="1920" height="1032" alt="image" src="https://github.com/user-attachments/assets/1186816e-3aea-49a0-be33-d7fc69af35c2" />
+
+
+
+>>>>>>> 3d900b0c26637ca1d5175cb82ec18881dce660e8
 
 
