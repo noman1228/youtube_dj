@@ -14,6 +14,9 @@ A working first-phase desktop DJ application with:
 - Automatic advancement of the ended deck to its next playlist track
 - Local audio-file support
 - Persistent playlists and mixer settings
+- A live 12-hour clock in the center console
+- Cross-deck drag and drop, Delete/Backspace removal, and double-right-click removal
+- Press-and-hold waveform sampling that restores the deck's original position and mix state
 - An independent third karaoke video deck with YouTube-only search, a manual queue, and detachable projector output
 - Reciprocal remotes: control the selected main deck from Karaoke, or karaoke playback, fades, and queue selection from the main mixer
 
@@ -51,7 +54,7 @@ is not part of setup. HEVC playback needs a decoder, not an encoder.
 Startup checks registered H.264, HEVC, VP9, AV1 and common audio decoders, an audio output device,
 and a working YouTube JavaScript runtime before opening the mixer.
 
-- `python run.py --repair`: reinstall the required packages and playback libraries.
+- `python run.py --repair`: force-reinstall every package in `requirements.txt`, plus `yt-dlp[default,deno]` and its extras.
 - `python run.py --check`: set up the environment and report readiness without playback.
 - `python run.py --software-video`: use CPU video decoding for laptops with GPU driver issues.
 - `.venv\Scripts\python.exe main.py --check`: offline Windows readiness check;
@@ -87,8 +90,9 @@ Python retains the playback, search, queue, automation and other behavior.
 
 Press **Shift+/** (**?**) on the main screen to open Appearance, including while
 fullscreen. Choose Midnight, Graphite, or Deep Ocean and customize the left/UI
-accent and right deck colors. Changes apply immediately and are saved for the
-next launch. **Reset to defaults** restores the original colors.
+accent and right deck colors, and configure how much each deck shrinks while
+karaoke is playing. Changes apply immediately and are saved for the next launch.
+**Reset to defaults** restores the original colors and a 35% karaoke deck shrink.
 
 Use the main screen's **FULL SCREEN** button or **F11** for borderless fullscreen;
 **Esc** restores the previous window mode.
@@ -124,13 +128,16 @@ rejects with HTTP 403.
 2. Search YouTube, YouTube Music, or both.
 3. Add results to the left or right playlist.
 4. Double-click a playlist item, or press Play.
-5. Move the crossfader manually, or leave **AUTO MIX** enabled.
-6. With Auto Mix enabled, the opposite deck starts near the end of the dominant track; preparation begins earlier when Beat Match needs more bars.
-7. After a deck finishes, it loads the next item in its own playlist and waits for its next turn.
-8. Use **MAIN MIX REMOTE** in the karaoke window to choose a side, adjust its volume, pause/resume it, or move the main crossfader.
-9. Use **KARAOKE REMOTE** on the main mixer to pause/resume karaoke and set its volume.
-10. **KARAOKE REMOTE** keeps the projector preview, show/hide button, playback controls, and queue visible together. Double-click a queue entry to play it.
-11. Leave **BEAT MATCH** enabled to set the fade in bars. Disable it to set the fade in seconds.
+5. Drag tracks between deck playlists to move them; reorder tracks within a playlist normally.
+6. Select a track and press **Delete** or **Backspace**, or double-right-click it, to remove it.
+7. Click a waveform to seek. Hold on a waveform for a short sample at the deck's current gain; release restores the prior position and mix state.
+8. Move the crossfader manually, or leave **AUTO MIX** enabled.
+9. With Auto Mix enabled, the opposite deck starts near the end of the dominant track; preparation begins earlier when Beat Match needs more bars.
+10. After a deck finishes, it loads the next item in its own playlist and waits for its next turn.
+11. Use **MAIN MIX REMOTE** in the karaoke window to choose a side, adjust its volume, pause/resume it, or move the main crossfader.
+12. Use **KARAOKE REMOTE** on the main mixer to pause/resume karaoke and set its volume. While karaoke plays, the monitor expands, suggestions collapse, and the decks compact around the larger video surface.
+13. **KARAOKE REMOTE** keeps the projector preview, show/hide button, playback controls, and queue visible together. Double-click a queue entry to play it.
+14. Leave **BEAT MATCH** enabled to set the fade in bars. Disable it to set the fade in seconds.
 
 The bottom **SIMILAR SONGS** panel automatically offers up to five songs related
 to the audible main music deck. Left-click a suggestion, then choose **Add to Left
@@ -164,6 +171,11 @@ Compact waveforms are cached across sessions in the application's cache director
 (up to 1,000 tracks). Local-file changes invalidate their cached waveform. If analysis
 fails, the waveform continues to build during playback as before. No additional software
 installation is required. Beat detection still uses the playing deck's audio independently.
+
+Clicking a waveform performs a normal seek. Holding the mouse button past the sample
+threshold starts temporary sample playback from that location without changing the
+deck gain control. Releasing returns the deck to its saved position, gain, crossfade
+level, and paused/playing state.
 
 ## Beat-matched Auto Mix
 
@@ -199,9 +211,18 @@ The karaoke deck is intentionally isolated from the two-deck Auto Mix bus. Futur
 
 - Singer queue and key-change controls
 - Key analysis, persistent beat-grid editing, waveform caching, cue points, loops, and transition previewing
-<img width="1552" height="932" alt="image" src="https://github.com/user-attachments/assets/87137381-bf45-47bb-88a1-44e03c6c9a53" />
-<img width="1362" height="913" alt="image" src="https://github.com/user-attachments/assets/c5484ffb-e3d4-4336-9734-fe4b384a6eaa" />
-<img width="962" height="572" alt="image" src="https://github.com/user-attachments/assets/5b3d180f-5330-4637-b334-1c0cf7bdead9" />
-<img width="1402" height="882" alt="image" src="https://github.com/user-attachments/assets/b4a578dc-e22c-4224-902a-df4307647d08" />
+
+## Screenshots
+
+The screenshots below show the main mixer, the karaoke monitor while playing,
+the search workflow, and the appearance controls.
+
+![EncoreMix main mixer with dual decks and center console](https://github.com/user-attachments/assets/87137381-bf45-47bb-88a1-44e03c6c9a53)
+
+![EncoreMix karaoke monitor expanded during playback](https://github.com/user-attachments/assets/c5484ffb-e3d4-4336-9734-fe4b384a6eaa)
+
+![EncoreMix search and related-song workflow](https://github.com/user-attachments/assets/5b3d180f-5330-4637-b334-1c0cf7bdead9)
+
+![EncoreMix appearance and theme controls](https://github.com/user-attachments/assets/b4a578dc-e22c-4224-902a-df4307647d08)
 
 

@@ -16,15 +16,15 @@ No `pyside6-uic` generation step is required.
 
 | Form | Controls included |
 | --- | --- |
-| [main_window.ui](main_window.ui) | Both decks, fullscreen, crossfader and cuts, Auto Mix, Beat Match, timed/bar fades, status, karaoke monitor, lab/projector controls, karaoke transport, volume and queue, song suggestions |
-| [deck.ui](deck.ui) | Shared left/right deck layout: artwork, title, metadata, state, BPM, gain, VU meter, elapsed/remaining time, waveform, seek slider, play/pause, stop, next, search, local files and reorderable playlist |
+| [main_window.ui](main_window.ui) | Both decks, fullscreen, live clock, crossfader and cuts, Auto Mix, Beat Match, timed/bar fades, status, karaoke monitor, lab/projector controls, karaoke transport, volume and queue, song suggestions |
+| [deck.ui](deck.ui) | Shared left/right deck layout: artwork, title, artist, state, BPM, gain, VU meter, elapsed/remaining time, waveform sampling/seek, play/pause, stop, next, search, local files and reorderable playlist |
 | [playlist_header.ui](playlist_header.ui) | Playlist heading, play on double-click, move to opposite deck, re-enable and remove |
 | [karaoke_window.ui](karaoke_window.ui) | Main-deck remote with side, transport, gain, crossfade and fade modes; karaoke search/results; video, transport, seek, volume, projector launch, queue and singer overlay toggle |
 | [projector_window.ui](projector_window.ui) | Audience video/idle-logo surface and status bar |
 | [search_dialog.ui](search_dialog.ui) | Search field, provider selector, search action, similar-to-left/right actions, status and results area |
 | [result_card.ui](result_card.ui) | Search-result artwork, title, metadata, description, Add Left/Right and Details |
 | [result_card_compact.ui](result_card_compact.ui) | Compact result layout used in Karaoke, with runtime queue target and Details |
-| [appearance_dialog.ui](appearance_dialog.ui) | Theme, left/right color selection, reset and close |
+| [appearance_dialog.ui](appearance_dialog.ui) | Theme, left/right color selection, karaoke deck shrink percentage, reset and close |
 | [song_suggestions.ui](song_suggestions.ui) | Similar-song heading, status and clickable recommendations |
 
 ## How forms connect to Python
