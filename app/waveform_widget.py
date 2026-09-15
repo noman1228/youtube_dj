@@ -13,6 +13,8 @@ class WaveformWidget(QWidget):
     """Prepared track overview with live decoded audio as a fallback."""
 
     seekRequested = Signal(float)
+    samplePressed = Signal(float)
+    sampleReleased = Signal()
     _BIN_COUNT = 512
     _MAX_SAMPLES = 20_000
 
@@ -145,6 +147,7 @@ class WaveformWidget(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._duration_ms > 0:
             self._preview_seek(event.position().x())
+            self.samplePressed.emit(self._seek_preview_fraction or 0.0)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -162,6 +165,7 @@ class WaveformWidget(QWidget):
             # Commit once. Seeking for every pointer movement repeatedly
             # flushes the decoder and interrupts the audible track.
             self._seek_at(event.position().x())
+            self.sampleReleased.emit()
             self.update()
             event.accept()
             return

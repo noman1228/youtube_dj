@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, QEvent, Qt, QUrl, Signal
+from PySide6.QtCore import QByteArray, QEvent, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import QFileDialog, QFrame, QListWidgetItem, QMessageBox, QWidget
@@ -27,6 +27,16 @@ class DeckWidget(QFrame):
         self.tracks: list[Track] = []
         self.current_index = -1
         self._seeking = False
+        self._sample_active = False
+        self._sample_was_playing = False
+        self._sample_position_ms = 0
+        self._sample_pending_fraction: float | None = None
+        self._sample_hold_timer = QTimer(self)
+        self._sample_hold_timer.setSingleShot(True)
+        self._sample_hold_timer.setInterval(180)
+        self._sample_hold_timer.timeout.connect(self._activate_sample)
+        self._sample_gain = 100
+        self._sample_crossfade_factor = 1.0
         self._network = QNetworkAccessManager(self)
         self._network.finished.connect(self._art_finished)
         self._art_reply: QNetworkReply | None = None
@@ -80,6 +90,8 @@ class DeckWidget(QFrame):
         self.progress.sliderPressed.connect(lambda: setattr(self, "_seeking", True))
         self.progress.sliderReleased.connect(self._seek_released)
         self.waveform.seekRequested.connect(self.engine.seek_fraction)
+        self.waveform.samplePressed.connect(self._sample_press_started)
+        self.waveform.sampleReleased.connect(self._sample_release_finished)
 
     def set_karaoke_compact(self, enabled: bool) -> None:
         """Keep the deck controls inside a temporarily narrow karaoke deck."""
@@ -90,6 +102,44 @@ class DeckWidget(QFrame):
         ):
             widget.setVisible(not enabled)
         self.playlist_header.set_two_rows(not enabled)
+
+    def _sample_press_started(self, fraction: float) -> None:
+        self._sample_pending_fraction = fraction
+        self._sample_hold_timer.start()
+
+    def _activate_sample(self) -> None:
+        fraction = self._sample_pending_fraction
+        if fraction is None:
+            return
+        self._sample_pending_fraction = None
+        self._sample_pressed(fraction)
+
+    def _sample_pressed(self, fraction: float) -> None:
+        if self._sample_active:
+            return
+        self._sample_active = True
+        self._sample_was_playing = self.engine.is_playing()
+        self._sample_position_ms = self.engine.current_times()[0]
+        self._sample_gain = self.engine._gain
+        self._sample_crossfade_factor = self.engine._crossfade_factor
+        self.engine.seek_fraction(fraction)
+        self.engine.set_crossfade_factor(1.0)
+        self.engine.play()
+
+    def _sample_release_finished(self) -> None:
+        self._sample_hold_timer.stop()
+        self._sample_pending_fraction = None
+        self._sample_released()
+
+    def _sample_released(self) -> None:
+        if not self._sample_active:
+            return
+        self._sample_active = False
+        self.engine.seek_ms(self._sample_position_ms)
+        self.engine.set_gain(self._sample_gain)
+        self.engine.set_crossfade_factor(self._sample_crossfade_factor)
+        if not self._sample_was_playing:
+            self.engine.pause()
 
     def eventFilter(self, watched, event) -> bool:
         if watched in (self.playlist, self.playlist.viewport()):

@@ -31,7 +31,10 @@ def main() -> int:
         if args.repair:
             install.extend(["--upgrade", "--force-reinstall"])
         subprocess.run([*install, "-r", str(ROOT / "requirements.txt")], cwd=ROOT, check=True)
-        subprocess.run([str(python), "-m", "pip", "install", "--upgrade", "yt-dlp[default,deno]"], cwd=ROOT, check=True)
+        yt_install = [str(python), "-m", "pip", "install", "--upgrade"]
+        if args.repair:
+            yt_install.append("--force-reinstall")
+        subprocess.run([*yt_install, "yt-dlp[default,deno]"], cwd=ROOT, check=True)
         subprocess.run([str(python), "-m", "pip", "check"], cwd=ROOT, check=True)
         flags = [flag for flag, enabled in (("--check", args.check), ("--software-video", args.software_video)) if enabled]
         return subprocess.call([str(python), str(ROOT / "main.py"), *flags], cwd=ROOT)
