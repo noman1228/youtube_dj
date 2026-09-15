@@ -3,22 +3,9 @@ from __future__ import annotations
 from PySide6.QtCore import QByteArray, Qt, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QCheckBox,
-    QDial,
-    QFileDialog,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
-    QMessageBox,
-    QPushButton,
-    QSlider,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QFileDialog, QFrame, QListWidgetItem, QMessageBox, QWidget
+
+from .ui_loader import load_ui
 
 from .media import QtMediaDeckEngine
 from .models import Track
@@ -47,113 +34,24 @@ class DeckWidget(QFrame):
         self.setObjectName("LeftDeck" if side == "left" else "RightDeck")
         self.engine = QtMediaDeckEngine(self, capture_waveform=True)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(15, 15, 15, 15)
-        root.setSpacing(10)
-
-        header = QHBoxLayout()
-        badge = QLabel(f"DECK {side.upper()}")
-        badge.setObjectName("DeckBadge")
-        self.state_label = QLabel("EMPTY")
-        self.state_label.setObjectName("Subtle")
-        self.state_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.state_label.setMinimumWidth(150)
-        self.bpm_label = QLabel("BPM --")
-        self.bpm_label.setObjectName("Subtle")
-        self.bpm_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        header.addWidget(badge)
-        header.addStretch(1)
-        header.addWidget(self.bpm_label)
-        header.addWidget(self.state_label)
-        root.addLayout(header)
-
-        hero = QHBoxLayout()
-        self.art = QLabel("DROP\nA TRACK")
-        self.art.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.art.setFixedSize(145, 145)
-        self.art.setStyleSheet("background:#080b10;border:1px solid #34445f;border-radius:12px;color:#66758c;font-weight:800;")
-        hero.addWidget(self.art)
-
-        info = QVBoxLayout()
-        self.title_label = QLabel("Nothing loaded")
-        self.title_label.setObjectName("TrackTitle")
-        self.title_label.setWordWrap(True)
-        self.meta_label = QLabel("Use search or add a local file")
-        self.meta_label.setObjectName("Subtle")
-        self.meta_label.setWordWrap(True)
-        info.addWidget(self.title_label)
-        info.addWidget(self.meta_label)
-        info.addStretch(1)
-
-        gain_row = QHBoxLayout()
-        gain_text = QLabel("GAIN")
-        gain_text.setObjectName("Subtle")
-        self.gain = QDial()
-        self.gain.setRange(0, 100)
-        self.gain.setValue(100)
-        self.gain.setFixedSize(56, 56)
-        self.gain.setNotchesVisible(True)
-        gain_row.addWidget(gain_text)
-        gain_row.addWidget(self.gain)
-        gain_row.addSpacing(8)
-        self.vu_meter = VuMeter(side)
-        gain_row.addWidget(self.vu_meter, 1)
-        info.addLayout(gain_row)
-        hero.addLayout(info, 1)
-        root.addLayout(hero)
-
-        time_row = QHBoxLayout()
-        self.elapsed = QLabel("00:00")
-        self.elapsed.setObjectName("TimeLabel")
-        self.remaining = QLabel("-00:00")
-        self.remaining.setObjectName("TimeLabel")
-        time_row.addWidget(self.elapsed)
-        time_row.addStretch(1)
-        time_row.addWidget(self.remaining)
-        root.addLayout(time_row)
-
-        self.waveform = WaveformWidget(side)
-        root.addWidget(self.waveform)
-
-        self.progress = QSlider(Qt.Orientation.Horizontal)
-        self.progress.setRange(0, 1000)
-        root.addWidget(self.progress)
-
-        transport = QHBoxLayout()
-        self.play_button = QPushButton("▶ / ❚❚")
-        self.play_button.setObjectName("PlayButton")
-        self.stop_button = QPushButton("■")
-        self.next_button = QPushButton("NEXT")
-        self.search_button = QPushButton("SEARCH")
+        ui = load_ui(self, "deck.ui", {
+            "VuMeter": lambda parent, _name: VuMeter(side, parent),
+            "WaveformWidget": lambda parent, _name: WaveformWidget(side, parent),
+            "PlaylistHeader": lambda parent, _name: PlaylistHeader(parent=parent),
+        })
+        self.setObjectName("LeftDeck" if side == "left" else "RightDeck")
+        ui.badge.setText(f"DECK {side.upper()}")
         self.search_button.setObjectName("PrimaryButton" if side == "left" else "HotButton")
-        self.local_button = QPushButton("LOCAL")
-        for button in [self.play_button, self.stop_button, self.next_button, self.search_button, self.local_button]:
-            transport.addWidget(button)
-        root.addLayout(transport)
-
-        playlist_label = QLabel(f"{side.upper()} SET PLAYLIST")
-        playlist_label.setStyleSheet("font-weight:800;letter-spacing:1px;")
-        self.play_on_double_click = QCheckBox("PLAY ON DOUBLE-CLICK")
-        self.play_on_double_click.setChecked(False)
-        self.play_on_double_click.setToolTip(
-            "When checked, double-clicking a playlist track loads and plays it. "
-            "When unchecked, double-click only loads the track."
-        )
-        self.remove_button = QPushButton("REMOVE")
-        self.reenable_button = QPushButton("RE-ENABLE")
-        self.move_button = QPushButton("MOVE RIGHT" if side == "left" else "MOVE LEFT")
-        self.playlist_header = PlaylistHeader(
-            playlist_label, self.play_on_double_click,
-            (self.move_button, self.reenable_button, self.remove_button),
-        )
-        root.addWidget(self.playlist_header)
-
-        self.playlist = QListWidget()
-        self.playlist.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.playlist.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.playlist.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.vu_meter.setAccessibleName(f"Deck {side} source VU meter")
+        self.vu_meter.setToolTip(f"Deck {side.upper()} source level (RMS dBFS), before gain and crossfader")
+        self.playlist_header.label.setText(f"{side.upper()} SET PLAYLIST")
+        for name in ("play_on_double_click", "remove_button", "reenable_button", "move_button"):
+            setattr(self, name, getattr(self.playlist_header, name))
+        self.move_button.setText("MOVE RIGHT" if side == "left" else "MOVE LEFT")
+        for widget in (self, self.search_button):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
         self.playlist.model().rowsMoved.connect(self._sync_order_from_widget)
-        root.addWidget(self.playlist, 1)
 
         self.engine.stateChanged.connect(self._state_changed)
         self.engine.positionChanged.connect(self._position_changed)

@@ -51,14 +51,20 @@ class QueuePrefetchTest(unittest.TestCase):
         for widget in (self.deck, self.karaoke):
             with self.subTest(widget=type(widget).__name__):
                 self._populate(widget, [self.first, skipped, self.second])
-                widget.engine.prefetch.assert_called_with(self.second)
+                if isinstance(widget, DeckWidget):
+                    widget.engine.prefetch.assert_called_with(self.second)
+                else:
+                    widget.engine.prefetch.assert_not_called()
                 self.assertIs(widget.engine.track, self.first)
                 widget.engine.stop.assert_not_called()
                 if isinstance(widget, DeckWidget):
                     widget.load_index(2)
                 else:
                     widget._load_index(2)
-                widget.engine.prefetch.assert_called_with(self.first)
+                if isinstance(widget, DeckWidget):
+                    widget.engine.prefetch.assert_called_with(self.first)
+                else:
+                    widget.engine.prefetch.assert_not_called()
 
     def test_adding_music_prepares_next_without_reloading_active_deck(self) -> None:
         self.deck.add_track(self.first)
@@ -69,13 +75,12 @@ class QueuePrefetchTest(unittest.TestCase):
         self.deck.engine.stop.assert_not_called()
         self.assertIs(self.deck.engine.track, self.first)
 
-    def test_adding_singer_prepares_next_without_reloading_active_karaoke(self) -> None:
+    def test_adding_singer_does_not_prepare_or_reload_active_karaoke(self) -> None:
         self._populate(self.karaoke, [self.first])
         self.karaoke.engine.load.reset_mock()
         with patch.object(QInputDialog, "getText", return_value=("Next singer", True)):
             self.karaoke._add_result("karaoke", self.second)
-        prepared = self.karaoke.engine.prefetch.call_args.args[0]
-        self.assertEqual(prepared.webpage_url, self.second.webpage_url)
+        self.karaoke.engine.prefetch.assert_not_called()
         self.karaoke.engine.load.assert_not_called()
         self.karaoke.engine.stop.assert_not_called()
         self.assertIs(self.karaoke.engine.track, self.first)
@@ -90,7 +95,10 @@ class QueuePrefetchTest(unittest.TestCase):
                     widget.remove_selected()
                 else:
                     widget._remove_selected()
-                widget.engine.prefetch.assert_called_with(self.third)
+                if isinstance(widget, DeckWidget):
+                    widget.engine.prefetch.assert_called_with(self.third)
+                else:
+                    widget.engine.prefetch.assert_not_called()
                 widget.engine.load.assert_not_called()
                 widget.engine.stop.assert_not_called()
 
@@ -108,7 +116,10 @@ class QueuePrefetchTest(unittest.TestCase):
         for widget in (self.deck, self.karaoke):
             with self.subTest(widget=type(widget).__name__):
                 self._populate(widget, [self.first])
-                widget.engine.prefetch.assert_called_with(None)
+                if isinstance(widget, DeckWidget):
+                    widget.engine.prefetch.assert_called_with(None)
+                else:
+                    widget.engine.prefetch.assert_not_called()
 
 
 if __name__ == "__main__":

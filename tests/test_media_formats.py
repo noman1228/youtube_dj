@@ -133,6 +133,44 @@ class MediaFormatTest(unittest.TestCase):
         self.assertEqual(selected[0].url, self.master)
         self.assertEqual(selected[0].playlist.count(b"#EXT-X-STREAM-INF:"), 1)
 
+    def test_streaming_skips_full_download_and_temporary_files(self) -> None:
+        manifest = (
+            '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",DEFAULT=YES,URI="audio.m3u8"\n'
+            '#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=854x480,AUDIO="a"\n480.m3u8\n'
+            '#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1920x1080,AUDIO="a"\n1080.m3u8\n'
+        )
+        for hls in (False, True):
+            with self.subTest(hls=hls):
+                task = ResolveTask(8, Track("Karaoke", "https://example.invalid/watch"),
+                                   video=True, max_height=480, prepare=False)
+                resolved, preparing, failed = Mock(), Mock(), Mock()
+                task.signals.resolved.connect(resolved)
+                task.signals.preparing.connect(preparing)
+                task.signals.failed.connect(failed)
+                info = {"url": self.master if hls else "https://example.invalid/video.mp4",
+                        "format_id": "hls-master" if hls else "18", "duration": 217}
+                with patch.object(yt_dlp.YoutubeDL, "extract_info", return_value=info), patch.object(
+                    yt_dlp.YoutubeDL, "urlopen", return_value=io.BytesIO(manifest.encode())
+                ), patch("app.media.prepare_media") as prepare, patch(
+                    "app.media.tempfile.TemporaryDirectory"
+                ) as temporary:
+                    task.run()
+                failed.assert_not_called()
+                preparing.assert_not_called()
+                prepare.assert_not_called()
+                temporary.assert_not_called()
+                resolved.assert_called_once()
+                source = resolved.call_args.args[2]
+                if hls:
+                    self.assertIsInstance(source, HlsVideoSource)
+                    self.assertEqual(source.height, 480)
+                    self.assertIn(b"audio.m3u8", source.playlist)
+                    self.assertNotIn(b"1080.m3u8", source.playlist)
+                else:
+                    self.assertEqual(source, info["url"])
+                self.assertFalse(_prepared_cache)
+
+
 
 class HlsSelectionTest(unittest.TestCase):
     def setUp(self) -> None:

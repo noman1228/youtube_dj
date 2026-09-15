@@ -76,6 +76,13 @@ python -m pip install --upgrade "yt-dlp[default,deno]"
 python main.py
 ```
 
+## Qt Designer forms
+
+Run `run_designer.bat` to edit the app's `.ui` files in PySide6 Designer.
+All ten forms are in [app/ui](app/ui/README.md), with a control inventory and
+editing instructions. The app loads saved forms directly on its next launch;
+Python retains the playback, search, queue, automation and other behavior.
+
 ## Appearance
 
 Press **Shift+/** (**?**) on the main screen to open Appearance, including while
@@ -121,9 +128,18 @@ rejects with HTTP 403.
 6. With Auto Mix enabled, the opposite deck starts near the end of the dominant track; preparation begins earlier when Beat Match needs more bars.
 7. After a deck finishes, it loads the next item in its own playlist and waits for its next turn.
 8. Use **MAIN MIX REMOTE** in the karaoke window to choose a side, adjust its volume, pause/resume it, or move the main crossfader.
-9. Use **KARAOKE REMOTE** on the main mixer to pause/resume karaoke, set its volume, or fade it in/out over the selected duration.
-10. The karaoke queue is mirrored in **KARAOKE REMOTE**. Double-click an entry there to jump directly to it.
-11. Leave **BEAT MATCH** enabled and choose **FADE BARS** for a beat-driven Auto Mix. Disable it to expose **FADE SECONDS** and use only the original timed crossfade.
+9. Use **KARAOKE REMOTE** on the main mixer to pause/resume karaoke and set its volume.
+10. **KARAOKE REMOTE** keeps the projector preview, show/hide button, playback controls, and queue visible together. Double-click a queue entry to play it.
+11. Leave **BEAT MATCH** enabled to set the fade in bars. Disable it to set the fade in seconds.
+
+The bottom **SIMILAR SONGS** panel automatically offers up to five songs related
+to the audible main music deck. Left-click a suggestion, then choose **Add to Left
+Deck** or **Add to Right Deck**; this only adds a playlist entry, without loading
+or playing it. Tracks already queued on either deck are excluded from new lookups.
+Suggestions wait for 15 seconds of settled playback with no active loading,
+preparation, waveform analysis, searches, or transitions. A single idle-priority
+worker reads the first radio page with a five-second request timeout; it downloads
+no media or thumbnails, caches results, and does not continuously retry failures.
 
 ## Random related-song searches
 
@@ -166,7 +182,7 @@ If either deck does not produce a confident beat estimate, Auto Mix safely falls
 ## Important implementation notes
 
 - YouTube stream URLs expire. The application resolves a fresh audio URL whenever a track is loaded.
-- Karaoke selects the highest available resolution supported by its combined-stream or HLS playback path, without a 720p cap. When YouTube only offers separate HLS renditions, it narrows their shared master playlist to one video rendition at the highest available resolution and its matching audio before opening the player. This avoids defaulting to a low-quality track and probing every available resolution at startup. Playback errors or five seconds without progress during a karaoke song trigger an automatic step down to the next available resolution, preserving the playback position. HLS quality changes reuse the resolved playlist; a brief buffering pause may occur. Each new song starts at maximum quality. Missing-format errors are reported once instead of repeatedly reconnecting.
+- Karaoke streams directly without downloading the full video or preparing the next singer. Resolution targets 480p (or the lowest available if all formats are larger) to reduce startup time, bandwidth, and decoding load. Karaoke resolution runs independently of music preparation. Playback errors or 20 seconds without progress trigger reconnection at a lower available resolution, preserving position; HLS recovery reuses the resolved master playlist. Slow connections can still cause buffering.
 - Auto Mix uses the full duration resolved by `yt-dlp`; temporary Qt/FFmpeg segment durations cannot trigger an early transition.
 - Waveform and beat metering are sampled at a bounded rate to keep dual-deck playback responsive on lower-power systems.
 - If a remote stream socket drops, ends before the known song duration, or makes no playback progress for 20 seconds, playback re-resolves the URL and retries up to three times from the interrupted position. A failed stream does not advance the queue; Pause and Stop cancel the playback timeout.

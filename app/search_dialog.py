@@ -16,19 +16,15 @@ from PySide6.QtCore import QByteArray, QThreadPool, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QKeyEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
-    QComboBox,
     QDialog,
     QFrame,
-    QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
-    QScrollArea,
-    QSizePolicy,
-    QVBoxLayout,
     QWidget,
 )
+
+from .ui_loader import load_ui
 
 from .models import Track
 from .search_service import SearchTask
@@ -47,98 +43,39 @@ class ResultCard(QFrame):
     ) -> None:
         super().__init__(parent)
         self.track = track
-        self.setObjectName("ResultCard")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setFixedHeight(175 if compact else 155)
-
+        ui = load_ui(self, "result_card_compact.ui" if compact else "result_card.ui")
+        ui.title.setText(track.title)
+        ui.title.setToolTip(track.title)
         if compact:
-            card_layout = QVBoxLayout(self)
-            card_layout.setContentsMargins(12, 12, 12, 12)
-            card_layout.setSpacing(10)
-            row = QHBoxLayout()
-            card_layout.addLayout(row, 1)
-        else:
-            row = QHBoxLayout(self)
-            row.setContentsMargins(12, 12, 12, 12)
-        row.setSpacing(10 if compact else 14)
-
-        self.thumbnail = QLabel("NO ART")
-        self.thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.thumbnail.setFixedSize(112 if compact else 160, 63 if compact else 90)
-        self.thumbnail.setStyleSheet("background:#080b10;border:1px solid #34445f;border-radius:8px;color:#66758c;")
-        row.addWidget(self.thumbnail, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        text_panel = QWidget()
-        text_panel.setObjectName("ResultTextPanel")
-        if compact:
-            text_panel.setMinimumWidth(0)
-            text_panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        else:
-            text_panel.setFixedWidth(360)
-        text_panel.setStyleSheet("background: transparent;")
-        text_col = QVBoxLayout(text_panel)
-        text_col.setContentsMargins(0, 0, 0, 0)
-        title = QLabel(track.title)
-        title.setObjectName("TrackTitle")
-        title.setWordWrap(True)
-        title.setMaximumHeight(44)
-        title.setToolTip(track.title)
-        if compact:
-            title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-            title.ensurePolished()
-            title.setMaximumHeight(2 * title.fontMetrics().lineSpacing())
-        text_col.addWidget(title)
-
+            ui.title.ensurePolished()
+            ui.title.setMaximumHeight(2 * ui.title.fontMetrics().lineSpacing())
         meta = " • ".join(part for part in [track.source, track.uploader, track.duration_text] if part)
-        meta_label = QLabel(meta)
-        meta_label.setObjectName("Subtle")
-        if compact:
-            meta_label.setWordWrap(True)
-            meta_label.setMaximumHeight(36)
-            meta_label.setToolTip(meta)
-        text_col.addWidget(meta_label)
-
-        # setVisible(True) below must never show a temporary top-level window.
-        description = QLabel(track.description or "No description supplied.", text_panel)
-        description.setWordWrap(True)
-        description.setMaximumHeight(38)
-        description.setToolTip(track.description)
-        description.setVisible(not compact)
-        text_col.addWidget(description)
-        row.addWidget(text_panel, 1 if compact else 0, Qt.AlignmentFlag.AlignVCenter)
-
-        buttons = QHBoxLayout() if compact else QVBoxLayout()
-        buttons.setSpacing(7)
-        if not compact:
-            buttons.addStretch(1)
+        ui.meta_label.setText(meta)
+        ui.meta_label.setToolTip(meta if compact else "")
+        ui.description.setText(track.description or "No description supplied.")
+        ui.description.setToolTip(track.description)
+        ui.description.setVisible(not compact)
         targets = targets or [
             ("left", "ADD LEFT", "PrimaryButton"),
             ("right", "ADD RIGHT", "HotButton"),
         ]
-        for target, label, object_name in targets:
-            add = QPushButton(label)
-            add.setObjectName(object_name)
-            if compact:
-                add.setMinimumWidth(112)
+        target_buttons = [ui.add_left, ui.add_right]
+        for button in target_buttons[len(targets):]:
+            button.hide()
+        for index, (target, label, object_name) in enumerate(targets):
+            if index < len(target_buttons):
+                add = target_buttons[index]
             else:
-                add.setFixedWidth(112)
+                add = QPushButton(self)
+                add.setMinimumWidth(ui.add_left.minimumWidth())
+                add.setMaximumWidth(ui.add_left.maximumWidth())
+                ui.buttons.insertWidget(ui.buttons.indexOf(ui.details), add)
+            add.setText(label)
+            add.setObjectName(object_name)
             add.clicked.connect(
                 lambda _checked=False, target=target: self.addRequested.emit(target, self.track)
             )
-            buttons.addWidget(add)
-        details = QPushButton("DETAILS")
-        if compact:
-            details.setMinimumWidth(112)
-        else:
-            details.setFixedWidth(112)
-        details.clicked.connect(self._show_details)
-        buttons.addWidget(details)
-        if compact:
-            card_layout.addLayout(buttons)
-        else:
-            buttons.addStretch(1)
-            row.addLayout(buttons)
-            row.addStretch(1)
+        ui.details.clicked.connect(self._show_details)
 
     def _show_details(self) -> None:
         QMessageBox.information(
@@ -175,50 +112,11 @@ class SearchDialog(QDialog):
         self._active_tasks: dict[tuple[int, str], SearchTask | SimilarSearchTask] = {}
         self._similar_side = ""
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(12)
-
-        header = QLabel("SEARCH THE CRATES")
-        header.setObjectName("AppTitle")
-        root.addWidget(header)
-
-        controls = QHBoxLayout()
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Artist, song, remix, live version…")
-        self.provider = QComboBox()
-        self.provider.addItems(["Both", "YouTube", "YouTube Music"])
-        self.search_button = QPushButton("SEARCH")
-        self.search_button.setObjectName("PrimaryButton")
-        controls.addWidget(self.search_edit, 1)
-        controls.addWidget(self.provider)
-        controls.addWidget(self.search_button)
-        root.addLayout(controls)
-
-        similar_controls = QHBoxLayout()
-        for side, style in (("left", "PrimaryButton"), ("right", "HotButton")):
-            button = QPushButton(f"SIMILAR TO {side.upper()}")
-            button.setObjectName(style)
-            button.setAutoDefault(False)
-            button.setToolTip("Find 10 random related songs using this deck's current track. Era and popularity matching depends on available metadata.")
-            button.clicked.connect(lambda _checked=False, side=side: self.similarRequested.emit(side))
-            similar_controls.addWidget(button)
-        root.addLayout(similar_controls)
-
-        self.status = QLabel("Enter a search term. Results can be sent directly to either deck.")
-        self.status.setObjectName("Subtle")
-        self.status.setWordWrap(True)
-        root.addWidget(self.status)
-
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.results_widget = QWidget()
-        self.results_layout = QVBoxLayout(self.results_widget)
-        self.results_layout.setContentsMargins(0, 0, 0, 0)
-        self.results_layout.setSpacing(10)
-        self.results_layout.addStretch(1)
-        self.scroll.setWidget(self.results_widget)
-        root.addWidget(self.scroll, 1)
+        ui = load_ui(self, "search_dialog.ui")
+        for side in ("left", "right"):
+            getattr(ui, f"similar_{side}").clicked.connect(
+                lambda _checked=False, side=side: self.similarRequested.emit(side)
+            )
 
         self.search_button.clicked.connect(self.search)
         self.search_edit.returnPressed.connect(self.search)

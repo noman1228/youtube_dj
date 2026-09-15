@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
-from PySide6.QtWidgets import (
-    QApplication, QColorDialog, QComboBox, QDialog, QDialogButtonBox,
-    QFormLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
-)
+from PySide6.QtWidgets import QApplication, QColorDialog, QDialog, QWidget
+
+from .ui_loader import load_ui
 
 from .theme import DEFAULT_APPEARANCE, THEMES, apply_appearance, load_appearance
 
@@ -36,33 +35,15 @@ class AppearanceDialog(QDialog):
         self.setWindowTitle("Appearance — EncoreMix")
         self.setMinimumWidth(420)
         self.preferences = dict(QApplication.instance().property("appearance") or load_appearance())
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(18)
-        title = QLabel("MAKE IT YOURS")
-        title.setObjectName("AppTitle")
-        layout.addWidget(title)
-        description = QLabel("Choose a theme and deck colors. Changes apply immediately\nand are saved automatically.")
-        description.setObjectName("Subtle")
-        layout.addWidget(description)
-        form = QFormLayout()
-        form.setSpacing(14)
-        self.theme_combo = QComboBox()
+        ui = load_ui(self, "appearance_dialog.ui")
+        self.theme_combo.clear()
         self.theme_combo.addItems(THEMES)
         self.theme_combo.setCurrentText(self.preferences["theme"])
-        form.addRow("Theme", self.theme_combo)
-        self.color_buttons: dict[str, QPushButton] = {}
-        for side, label in (("left", "Left deck / UI accent"), ("right", "Right deck")):
-            button = QPushButton()
+        self.color_buttons = {"left": ui.left_color_button, "right": ui.right_color_button}
+        for side, button in self.color_buttons.items():
             button.clicked.connect(lambda _checked=False, side=side: self._choose_color(side))
-            self.color_buttons[side] = button
-            form.addRow(label, button)
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        reset = buttons.addButton("Reset to defaults", QDialogButtonBox.ButtonRole.ResetRole)
-        reset.clicked.connect(self._reset)
-        buttons.rejected.connect(self.close)
-        layout.addWidget(buttons)
+        ui.reset_button.clicked.connect(self._reset)
+        ui.buttons.rejected.connect(self.close)
         self.theme_combo.currentTextChanged.connect(self._theme_changed)
         self._refresh_colors()
 

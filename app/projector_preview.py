@@ -11,7 +11,7 @@ class ProjectorPreview(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._source: QWidget | None = None
-        self.setFixedHeight(132)
+        self.setFixedHeight(112)
         self.setAccessibleName("Live projector preview")
         self.setToolTip("Live projector output, including the logo, glow and singer overlay")
         self._timer = QTimer(self)
@@ -36,8 +36,9 @@ class ProjectorPreview(QWidget):
         font.setPointSize(8)
         painter.setFont(font)
         painter.setPen(QColor("#8f9db2"))
-        painter.drawText(self.rect().adjusted(0, 0, 0, -114), Qt.AlignmentFlag.AlignCenter, "PROJECTOR PREVIEW")
-        monitor = QRectF(self.rect().adjusted(0, 20, 0, 0))
+        # The surrounding karaoke heading identifies this monitor. Keep all
+        # of its height for the picture instead of repeating a text heading.
+        monitor = QRectF(self.rect())
         painter.fillRect(monitor, QColor("#000000"))
         source = self._source
         if source is None or not source.isVisible():

@@ -1,0 +1,899 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>KaraokeWindow</class>
+ <widget class="QDialog" name="karaoke_window">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1000</width>
+    <height>740</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>1000</width>
+    <height>650</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>EncoreMix - KARAOKE DECK</string>
+  </property>
+  <layout class="QVBoxLayout" name="root" stretch="0,0,1">
+   <property name="spacing">
+    <number>6</number>
+   </property>
+   <property name="sizeConstraint">
+    <enum>SetDefaultConstraint</enum>
+   </property>
+   <property name="leftMargin">
+    <number>14</number>
+   </property>
+   <property name="topMargin">
+    <number>14</number>
+   </property>
+   <property name="rightMargin">
+    <number>14</number>
+   </property>
+   <property name="bottomMargin">
+    <number>14</number>
+   </property>
+   <item>
+    <widget class="QLabel" name="title">
+     <property name="text">
+      <string>KARAOKE DECK</string>
+     </property>
+     <property name="runtimeObjectName" stdset="0">
+      <string>AppTitle</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QFrame" name="main_remote">
+     <property name="runtimeObjectName" stdset="0">
+      <string>DeckFrame</string>
+     </property>
+     <layout class="QHBoxLayout" name="hboxlayout" stretch="0,0,0,0,0,1,0,0,1,0,0,0,0,0,0">
+      <property name="spacing">
+       <number>10</number>
+      </property>
+      <property name="sizeConstraint">
+       <enum>SetDefaultConstraint</enum>
+      </property>
+      <property name="leftMargin">
+       <number>12</number>
+      </property>
+      <property name="topMargin">
+       <number>9</number>
+      </property>
+      <property name="rightMargin">
+       <number>12</number>
+      </property>
+      <property name="bottomMargin">
+       <number>9</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="label">
+        <property name="styleSheet">
+         <string notr="true">font-weight:800;letter-spacing:1px;</string>
+        </property>
+        <property name="text">
+         <string>MAIN MIX REMOTE</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="side_label">
+        <property name="text">
+         <string>SIDE</string>
+        </property>
+        <property name="runtimeObjectName" stdset="0">
+         <string>Subtle</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="main_side">
+        <property name="currentText">
+         <string>LEFT</string>
+        </property>
+        <property name="currentIndex">
+         <number>0</number>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>main_side</string>
+        </property>
+        <item>
+         <property name="text">
+          <string>LEFT</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>RIGHT</string>
+         </property>
+        </item>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="main_play_button">
+        <property name="text">
+         <string>PLAY / PAUSE</string>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>main_play_button</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="Subtle">
+        <property name="text">
+         <string>VOLUME</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSlider" name="main_volume">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>170</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="maximum">
+         <number>100</number>
+        </property>
+        <property name="value">
+         <number>100</number>
+        </property>
+        <property name="sliderPosition">
+         <number>100</number>
+        </property>
+        <property name="orientation">
+         <enum>Horizontal</enum>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>main_volume</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_2">
+        <property name="text">
+         <string>L</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="fade_label">
+        <property name="text">
+         <string>FADE</string>
+        </property>
+        <property name="runtimeObjectName" stdset="0">
+         <string>Subtle</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSlider" name="main_crossfader">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>230</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="maximum">
+         <number>1000</number>
+        </property>
+        <property name="value">
+         <number>500</number>
+        </property>
+        <property name="sliderPosition">
+         <number>500</number>
+        </property>
+        <property name="orientation">
+         <enum>Horizontal</enum>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>main_crossfader</string>
+        </property>
+        <property name="runtimeObjectName" stdset="0">
+         <string>Crossfader</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_3">
+        <property name="text">
+         <string>R</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="main_beat_match">
+        <property name="toolTip">
+         <string>Use beat-based bars or timed seconds for Auto Mix</string>
+        </property>
+        <property name="text">
+         <string>BEAT</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>main_beat_match</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="main_fade_time_label">
+        <property name="text">
+         <string>TIME</string>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>main_fade_time_label</string>
+        </property>
+        <property name="runtimeObjectName" stdset="0">
+         <string>Subtle</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="main_fade_seconds">
+        <property name="suffix">
+         <string> s</string>
+        </property>
+        <property name="minimum">
+         <number>2</number>
+        </property>
+        <property name="maximum">
+         <number>10</number>
+        </property>
+        <property name="value">
+         <number>8</number>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>main_fade_seconds</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="main_fade_bars_label">
+        <property name="text">
+         <string>BARS</string>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>main_fade_bars_label</string>
+        </property>
+        <property name="runtimeObjectName" stdset="0">
+         <string>Subtle</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="main_fade_bars">
+        <property name="minimum">
+         <number>1</number>
+        </property>
+        <property name="maximum">
+         <number>8</number>
+        </property>
+        <property name="value">
+         <number>4</number>
+        </property>
+        <property name="pythonAttribute" stdset="0">
+         <string>main_fade_bars</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QSplitter" name="splitter">
+     <property name="childrenCollapsible">
+      <bool>false</bool>
+     </property>
+     <widget class="QFrame" name="search_panel">
+      <property name="geometry">
+       <rect>
+        <x>0</x>
+        <y>0</y>
+        <width>340</width>
+        <height>480</height>
+       </rect>
+      </property>
+      <property name="minimumSize">
+       <size>
+        <width>340</width>
+        <height>0</height>
+       </size>
+      </property>
+      <property name="runtimeObjectName" stdset="0">
+       <string>CenterConsole</string>
+      </property>
+      <layout class="QVBoxLayout" name="vboxlayout" stretch="0,0,0,1">
+       <property name="spacing">
+        <number>6</number>
+       </property>
+       <property name="sizeConstraint">
+        <enum>SetDefaultConstraint</enum>
+       </property>
+       <property name="leftMargin">
+        <number>9</number>
+       </property>
+       <property name="topMargin">
+        <number>9</number>
+       </property>
+       <property name="rightMargin">
+        <number>9</number>
+       </property>
+       <property name="bottomMargin">
+        <number>9</number>
+       </property>
+       <item>
+        <widget class="QLabel" name="heading">
+         <property name="styleSheet">
+          <string notr="true">font-size:14pt;font-weight:800;</string>
+         </property>
+         <property name="text">
+          <string>KARAOKE SEARCH</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="search_row" stretch="1,0">
+         <property name="spacing">
+          <number>6</number>
+         </property>
+         <property name="sizeConstraint">
+          <enum>SetDefaultConstraint</enum>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QLineEdit" name="search_edit">
+           <property name="placeholderText">
+            <string>Artist and song title</string>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>search_edit</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="search_button">
+           <property name="text">
+            <string>SEARCH</string>
+           </property>
+           <property name="autoDefault">
+            <bool>true</bool>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>search_button</string>
+           </property>
+           <property name="runtimeObjectName" stdset="0">
+            <string>HotButton</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QLabel" name="search_status">
+         <property name="text">
+          <string>Every query automatically includes "karaoke" and searches YouTube only.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+         <property name="pythonAttribute" stdset="0">
+          <string>search_status</string>
+         </property>
+         <property name="runtimeObjectName" stdset="0">
+          <string>Subtle</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QScrollArea" name="scroll">
+         <property name="widgetResizable">
+          <bool>true</bool>
+         </property>
+         <widget class="QWidget" name="results_widget">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>638</width>
+            <height>478</height>
+           </rect>
+          </property>
+          <property name="autoFillBackground">
+           <bool>true</bool>
+          </property>
+          <property name="pythonAttribute" stdset="0">
+           <string>results_widget</string>
+          </property>
+          <layout class="QVBoxLayout" name="results_layout" stretch="1">
+           <property name="spacing">
+            <number>10</number>
+           </property>
+           <property name="sizeConstraint">
+            <enum>SetDefaultConstraint</enum>
+           </property>
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <spacer name="spacer_1">
+             <property name="sizeHint">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="orientation">
+              <enum>Qt::Orientation::Vertical</enum>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QFrame" name="deck_panel">
+      <property name="geometry">
+       <rect>
+        <x>322</x>
+        <y>0</y>
+        <width>318</width>
+        <height>480</height>
+       </rect>
+      </property>
+      <property name="runtimeObjectName" stdset="0">
+       <string>CenterConsole</string>
+      </property>
+      <layout class="QVBoxLayout" name="layout" stretch="0,3,0,0,0,0,0,2">
+       <property name="spacing">
+        <number>6</number>
+       </property>
+       <property name="sizeConstraint">
+        <enum>SetDefaultConstraint</enum>
+       </property>
+       <property name="leftMargin">
+        <number>9</number>
+       </property>
+       <property name="topMargin">
+        <number>9</number>
+       </property>
+       <property name="rightMargin">
+        <number>9</number>
+       </property>
+       <property name="bottomMargin">
+        <number>9</number>
+       </property>
+       <item>
+        <layout class="QHBoxLayout" name="header" stretch="0,1,0">
+         <property name="spacing">
+          <number>6</number>
+         </property>
+         <property name="sizeConstraint">
+          <enum>SetDefaultConstraint</enum>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="deck_title">
+           <property name="text">
+            <string>DECK KARAOKE</string>
+           </property>
+           <property name="runtimeObjectName" stdset="0">
+            <string>DeckBadge</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="spacer_2">
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Orientation::Horizontal</enum>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QLabel" name="state_label">
+           <property name="text">
+            <string>EMPTY</string>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>state_label</string>
+           </property>
+           <property name="runtimeObjectName" stdset="0">
+            <string>Subtle</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="VideoDisplayWidget" name="video">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>330</height>
+          </size>
+         </property>
+         <property name="pythonAttribute" stdset="0">
+          <string>video</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="now_playing">
+         <property name="text">
+          <string>Nothing loaded</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+         <property name="pythonAttribute" stdset="0">
+          <string>now_playing</string>
+         </property>
+         <property name="runtimeObjectName" stdset="0">
+          <string>TrackTitle</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="time_row" stretch="0,1,0">
+         <property name="spacing">
+          <number>6</number>
+         </property>
+         <property name="sizeConstraint">
+          <enum>SetDefaultConstraint</enum>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="elapsed">
+           <property name="text">
+            <string>00:00</string>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>elapsed</string>
+           </property>
+           <property name="runtimeObjectName" stdset="0">
+            <string>TimeLabel</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="spacer_3">
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Orientation::Horizontal</enum>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QLabel" name="remaining">
+           <property name="text">
+            <string>-00:00</string>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>remaining</string>
+           </property>
+           <property name="runtimeObjectName" stdset="0">
+            <string>TimeLabel</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QSlider" name="progress">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="maximum">
+          <number>1000</number>
+         </property>
+         <property name="orientation">
+          <enum>Horizontal</enum>
+         </property>
+         <property name="pythonAttribute" stdset="0">
+          <string>progress</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="controls" stretch="0,0,0,0,0,0">
+         <property name="spacing">
+          <number>6</number>
+         </property>
+         <property name="sizeConstraint">
+          <enum>SetDefaultConstraint</enum>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QPushButton" name="play_button">
+           <property name="text">
+            <string>PLAY / PAUSE</string>
+           </property>
+           <property name="autoDefault">
+            <bool>true</bool>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>play_button</string>
+           </property>
+           <property name="runtimeObjectName" stdset="0">
+            <string>HotButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="stop_button">
+           <property name="text">
+            <string>STOP</string>
+           </property>
+           <property name="autoDefault">
+            <bool>true</bool>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>stop_button</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="next_button">
+           <property name="text">
+            <string>NEXT</string>
+           </property>
+           <property name="autoDefault">
+            <bool>true</bool>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>next_button</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="projector_button">
+           <property name="text">
+            <string>PROJECTOR WINDOW</string>
+           </property>
+           <property name="autoDefault">
+            <bool>true</bool>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>projector_button</string>
+           </property>
+           <property name="runtimeObjectName" stdset="0">
+            <string>PrimaryButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="volume_label">
+           <property name="text">
+            <string>VOLUME</string>
+           </property>
+           <property name="runtimeObjectName" stdset="0">
+            <string>Subtle</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSlider" name="volume">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>150</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="maximum">
+            <number>100</number>
+           </property>
+           <property name="value">
+            <number>100</number>
+           </property>
+           <property name="sliderPosition">
+            <number>100</number>
+           </property>
+           <property name="orientation">
+            <enum>Horizontal</enum>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>volume</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="queue_header" stretch="0,0,1,0,0">
+         <property name="spacing">
+          <number>6</number>
+         </property>
+         <property name="sizeConstraint">
+          <enum>SetDefaultConstraint</enum>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="label_4">
+           <property name="text">
+            <string>KARAOKE QUEUE</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QCheckBox" name="show_artist">
+           <property name="text">
+            <string>SHOW SINGER ON PROJECTOR</string>
+           </property>
+           <property name="checked">
+            <bool>true</bool>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>show_artist</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="spacer_4">
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Orientation::Horizontal</enum>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QPushButton" name="reenable_button">
+           <property name="text">
+            <string>RE-ENABLE</string>
+           </property>
+           <property name="autoDefault">
+            <bool>true</bool>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>reenable_button</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="remove_button">
+           <property name="text">
+            <string>REMOVE</string>
+           </property>
+           <property name="autoDefault">
+            <bool>true</bool>
+           </property>
+           <property name="pythonAttribute" stdset="0">
+            <string>remove_button</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QListWidget" name="playlist">
+         <property name="pythonAttribute" stdset="0">
+          <string>playlist</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <connections />
+ <customwidgets>
+  <customwidget>
+   <class>VideoDisplayWidget</class>
+   <extends>QWidget</extends>
+   <header>app.karaoke_window</header>
+  </customwidget>
+ </customwidgets>
+</ui>

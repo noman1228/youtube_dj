@@ -48,12 +48,15 @@ def similarity_weight(seed: dict, candidate: dict, rank: int) -> float:
 
 
 class SimilarSearchTask(QRunnable):
-    def __init__(self, track: Track, provider: str, request_id: int, excluded: set[str]) -> None:
+    def __init__(self, track: Track, provider: str, request_id: int, excluded: set[str], limit: int = 10,
+                 radio_limit: int = 40) -> None:
         super().__init__()
         self.track = Track.from_dict(track.to_dict())
         self.provider = provider
         self.request_id = request_id
         self.excluded = set(excluded)
+        self.limit = limit
+        self.radio_limit = radio_limit
         self.signals = SearchSignals()
 
     @Slot()
@@ -65,13 +68,15 @@ class SimilarSearchTask(QRunnable):
         except Exception as exc:
             self.signals.failed.emit(self.request_id, self.provider, str(exc))
 
-    def find_tracks(self) -> list[Track]:
+    def find_tracks(self, client=None) -> list[Track]:
         from ytmusicapi import YTMusic
 
         seed_id = youtube_id(self.track)
         if not seed_id:
             raise ValueError("Load a YouTube or YouTube Music track in this deck first. Local files do not have a song-radio ID.")
-        radio = YTMusic().get_watch_playlist(videoId=seed_id, radio=True, limit=40)
+        radio = (client if client is not None else YTMusic()).get_watch_playlist(
+            videoId=seed_id, radio=True, limit=self.radio_limit,
+        )
         entries = radio.get("tracks") or []
         seed = next((entry for entry in entries if entry.get("videoId") == seed_id), {})
         seen = self.excluded | {seed_id}
@@ -86,7 +91,7 @@ class SimilarSearchTask(QRunnable):
         if not candidates:
             raise ValueError("No new related songs were returned for this track. Try another seed track.")
         results = []
-        for _ in range(min(10, len(candidates))):
+        for _ in range(min(self.limit, len(candidates))):
             index = random.choices(range(len(candidates)), weights=weights, k=1)[0]
             chosen = candidates.pop(index)
             weights.pop(index)

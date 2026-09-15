@@ -1,0 +1,47 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>ProjectorWindow</class>
+ <widget class="QMainWindow" name="projector_window">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>960</width>
+    <height>540</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>EncoreMix Karaoke Video - Move to projector, then press F11</string>
+  </property>
+  <widget class="ProjectorVideoWidget" name="video">
+   <property name="styleSheet">
+    <string notr="true">background:#000;</string>
+   </property>
+   <property name="pythonAttribute" stdset="0">
+    <string>video</string>
+   </property>
+  </widget>
+  <widget class="QStatusBar" name="statusbar">
+   <property name="sizePolicy">
+    <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
+     <horstretch>0</horstretch>
+     <verstretch>0</verstretch>
+    </sizepolicy>
+   </property>
+   <property name="minimumSize">
+    <size>
+     <width>0</width>
+     <height>0</height>
+    </size>
+   </property>
+  </widget>
+ </widget>
+ <connections />
+ <customwidgets>
+  <customwidget>
+   <class>ProjectorVideoWidget</class>
+   <extends>QWidget</extends>
+   <header>app.karaoke_window</header>
+  </customwidget>
+ </customwidgets>
+</ui>

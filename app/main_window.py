@@ -7,22 +7,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTimer, Qt
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QScrollArea,
-    QSlider,
-    QSpinBox,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QListWidgetItem, QMainWindow, QMessageBox
+
+from .ui_loader import load_ui
 
 from .beat import (
     BeatInfo,
@@ -40,6 +27,8 @@ from .models import Track
 from .projector_preview import ProjectorPreview
 from .search_dialog import SearchDialog
 from .similar_search import youtube_id
+from .song_suggestions import SongSuggestions
+from .symmetric_scroll_area import SymmetricScrollArea
 
 
 class MainWindow(QMainWindow):
@@ -90,197 +79,22 @@ class MainWindow(QMainWindow):
         self._beat_launch_in_progress = False
         self._beat_phase_settling = False
         self._last_triggered_side: str | None = None
-        self._karaoke_fade_start = 100
-        self._karaoke_fade_target = 100
-        self._karaoke_fade_started = 0.0
-        self._karaoke_fade_updating = False
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(14, 14, 14, 14)
-        root.setSpacing(12)
-
-        decks_row = QHBoxLayout()
-        decks_row.setSpacing(12)
-        self.left = DeckWidget("left")
-        self.right = DeckWidget("right")
-        decks_row.addWidget(self.left, 1)
-
-        center = QFrame()
-        center.setObjectName("CenterConsole")
-        center.setFixedWidth(235)
-        center_layout = QVBoxLayout(center)
-        center_layout.setContentsMargins(16, 18, 16, 18)
-        center_layout.setSpacing(14)
-        self.fullscreen_button = QPushButton("FULL SCREEN")
-        self.fullscreen_button.setCheckable(True)
-        self.fullscreen_button.setProperty("compactControl", True)
-        self.fullscreen_button.setToolTip("F11: toggle fullscreen · Esc: exit fullscreen")
+        ui = load_ui(self, "main_window.ui", {
+            "DeckWidget": lambda parent, name: DeckWidget(name, parent),
+            "ProjectorPreview": lambda parent, _name: ProjectorPreview(parent),
+            "SongSuggestions": lambda parent, _name: SongSuggestions(self._suggestion_context, parent),
+            "SymmetricScrollArea": lambda parent, _name: SymmetricScrollArea(parent),
+        })
+        ui.controls_scroll.viewport().setObjectName("CenterControlsViewport")
         self.fullscreen_button.clicked.connect(self._toggle_fullscreen)
-        center_layout.addWidget(self.fullscreen_button)
-        center_controls = QWidget()
-        center_controls.setObjectName("CenterControls")
-        controls_layout = QVBoxLayout(center_controls)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(10)
-        mix_title = QLabel("MIX BUS")
-        mix_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        mix_title.setStyleSheet("font-size:15pt;font-weight:900;letter-spacing:2px;")
-        controls_layout.addWidget(mix_title)
-
-        self.auto_mix = QCheckBox("AUTO MIX")
-        self.auto_mix.setChecked(True)
-        self.auto_mix.setToolTip(
-            "Start the opposite deck near the end of the track; Beat Match prepares it earlier."
-        )
-        controls_layout.addWidget(self.auto_mix)
-
-        self.beat_match = QCheckBox("BEAT MATCH")
-        self.beat_match.setChecked(True)
-        self.beat_match.setToolTip(
-            "Silently analyze and align the incoming deck; fall back to a timed mix when needed."
-        )
-        controls_layout.addWidget(self.beat_match)
-
-        self.fade_label = QLabel("FADE SECONDS")
-        self.fade_label.setObjectName("Subtle")
-        self.fade_seconds = QSpinBox()
-        self.fade_seconds.setRange(2, 10)
-        self.fade_seconds.setValue(8)
-        self.fade_seconds.setToolTip("Fade duration for timed mode and beat-analysis fallback.")
-        controls_layout.addWidget(self.fade_label)
-        controls_layout.addWidget(self.fade_seconds)
-
-        self.fade_bars_label = QLabel("FADE BARS")
-        self.fade_bars_label.setObjectName("Subtle")
-        self.fade_bars = QSpinBox()
-        self.fade_bars.setRange(1, 8)
-        self.fade_bars.setValue(4)
-        self.fade_bars.setSuffix(" bars")
-        self.fade_bars.setToolTip("Four beats per bar; Beat Match follows the outgoing deck.")
-        controls_layout.addWidget(self.fade_bars_label)
-        controls_layout.addWidget(self.fade_bars)
-
-        self.status = QLabel("AUTOMIX ARMED")
-        self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status.setWordWrap(True)
-        self.status.setStyleSheet("padding:12px;background:#0c111a;border-radius:10px;font-weight:800;")
-        controls_layout.addWidget(self.status)
-
-        self.karaoke_remote = karaoke_remote = QFrame()
-        karaoke_remote.setObjectName("KaraokeRemote")
-        karaoke_remote.setProperty("playing", False)
-        karaoke_remote.setProperty("flashOn", False)
-        karaoke_remote_layout = QVBoxLayout(karaoke_remote)
-        karaoke_remote_layout.setContentsMargins(9, 9, 9, 9)
-        karaoke_remote_layout.setSpacing(7)
-        self.karaoke_remote_title = karaoke_remote_title = QLabel("KARAOKE REMOTE")
-        karaoke_remote_title.setObjectName("KaraokeRemoteTitle")
-        karaoke_remote_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        karaoke_remote_layout.addWidget(karaoke_remote_title)
-
-        self.karaoke_lab_button = QPushButton("KARAOKE LAB")
-        self.karaoke_lab_button.setProperty("compactControl", True)
-        self.karaoke_lab_button.setToolTip("Open Karaoke Lab")
-        karaoke_remote_layout.addWidget(self.karaoke_lab_button)
-
-        self.karaoke_play_button = QPushButton("PLAY / PAUSE")
-        self.karaoke_play_button.setObjectName("HotButton")
-        self.karaoke_play_button.setProperty("compactControl", True)
-        karaoke_remote_layout.addWidget(self.karaoke_play_button)
-
-        self.karaoke_projector_button = QPushButton("SHOW PROJECTOR")
-        self.karaoke_projector_button.setCheckable(True)
-        self.karaoke_projector_button.setProperty("compactControl", True)
-        self.karaoke_projector_button.setToolTip("Open the projector; closing it requires two Yes confirmations")
-        karaoke_remote_layout.addWidget(self.karaoke_projector_button)
-
-        karaoke_volume_row = QHBoxLayout()
-        karaoke_volume_label = QLabel("VOL")
-        karaoke_volume_label.setObjectName("Subtle")
-        self.karaoke_volume = QSlider(Qt.Orientation.Horizontal)
-        self.karaoke_volume.setRange(0, 100)
-        self.karaoke_volume.setValue(100)
-        karaoke_volume_row.addWidget(karaoke_volume_label)
-        karaoke_volume_row.addWidget(self.karaoke_volume, 1)
-        karaoke_remote_layout.addLayout(karaoke_volume_row)
-
-        karaoke_fade_row = QHBoxLayout()
-        self.karaoke_fade_out_button = QPushButton("FADE OUT")
-        self.karaoke_fade_in_button = QPushButton("FADE IN")
-        self.karaoke_fade_out_button.setProperty("compactControl", True)
-        self.karaoke_fade_in_button.setProperty("compactControl", True)
-        self.karaoke_fade_seconds = QSpinBox()
-        self.karaoke_fade_seconds.setRange(1, 10)
-        self.karaoke_fade_seconds.setValue(3)
-        self.karaoke_fade_seconds.setSuffix(" s")
-        self.karaoke_fade_seconds.setToolTip("Karaoke fade duration")
-        self.karaoke_fade_seconds.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        karaoke_fade_row.addWidget(self.karaoke_fade_out_button, 1)
-        karaoke_fade_row.addWidget(self.karaoke_fade_in_button, 1)
-        karaoke_remote_layout.addLayout(karaoke_fade_row)
-
-        karaoke_duration_label = QLabel("FADE DURATION")
-        karaoke_duration_label.setObjectName("Subtle")
-        karaoke_remote_layout.addWidget(karaoke_duration_label)
-        karaoke_remote_layout.addWidget(self.karaoke_fade_seconds)
-
-        karaoke_playlist_label = QLabel("KARAOKE PLAYLIST")
-        karaoke_playlist_label.setObjectName("Subtle")
-        karaoke_remote_layout.addWidget(karaoke_playlist_label)
-        self.karaoke_playlist = QListWidget()
-        self.karaoke_playlist.setObjectName("MainKaraokePlaylist")
-        self.karaoke_playlist.setMinimumHeight(75)
-        self.karaoke_playlist.setMaximumHeight(120)
-        self.karaoke_playlist.setToolTip("Double-click a track to play it in Karaoke")
-        karaoke_remote_layout.addWidget(self.karaoke_playlist)
-        controls_layout.addWidget(karaoke_remote)
-        controls_layout.addStretch(1)
-        controls_scroll = QScrollArea()
-        controls_scroll.setObjectName("CenterControlsScroll")
-        controls_scroll.viewport().setObjectName("CenterControlsViewport")
-        controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        controls_scroll.setWidgetResizable(True)
-        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        controls_scroll.setWidget(center_controls)
-        center_layout.addWidget(controls_scroll, 1)
-        self.projector_preview = ProjectorPreview()
-        center_layout.addWidget(self.projector_preview)
-
-        left_marker = QLabel("LEFT")
-        right_marker = QLabel("RIGHT")
-        marker_row = QHBoxLayout()
-        marker_row.addWidget(left_marker)
-        marker_row.addStretch(1)
-        marker_row.addWidget(right_marker)
-        center_layout.addLayout(marker_row)
-
-        self.crossfader = QSlider(Qt.Orientation.Horizontal)
-        self.crossfader.setObjectName("Crossfader")
-        self.crossfader.setRange(0, self._CROSSFADER_MAX)
-        self.crossfader.setValue(self._CROSSFADER_MAX // 2)
-        center_layout.addWidget(self.crossfader)
-
-        center_button_row = QHBoxLayout()
-        cut_left = QPushButton("<")
-        center_button = QPushButton("CENTER")
-        cut_right = QPushButton(">")
-        for button in (cut_left, center_button, cut_right):
-            button.setObjectName("MixerButton")
-        cut_left.setToolTip("Cut instantly to the left deck")
-        center_button.setToolTip("Center both decks")
-        cut_right.setToolTip("Cut instantly to the right deck")
-        cut_left.clicked.connect(lambda: self.crossfader.setValue(0))
-        center_button.clicked.connect(lambda: self.crossfader.setValue(self._CROSSFADER_MAX // 2))
-        cut_right.clicked.connect(lambda: self.crossfader.setValue(self._CROSSFADER_MAX))
-        center_button_row.addWidget(cut_left)
-        center_button_row.addWidget(center_button)
-        center_button_row.addWidget(cut_right)
-        center_layout.addLayout(center_button_row)
-        decks_row.addWidget(center)
-        decks_row.addWidget(self.right, 1)
-        root.addLayout(decks_row, 1)
+        ui.cut_left.clicked.connect(lambda: self.crossfader.setValue(0))
+        ui.center_button.clicked.connect(lambda: self.crossfader.setValue(self._CROSSFADER_MAX // 2))
+        ui.cut_right.clicked.connect(lambda: self.crossfader.setValue(self._CROSSFADER_MAX))
+        self.song_suggestions.addRequested.connect(self._add_suggestion)
+        for deck in (self.left, self.right):
+            deck.installEventFilter(self)
+        self._sync_deck_header_layout()
 
         self.left.searchRequested.connect(self.open_search)
         self.right.searchRequested.connect(self.open_search)
@@ -301,8 +115,6 @@ class MainWindow(QMainWindow):
         self.karaoke_play_button.clicked.connect(self._toggle_karaoke)
         self.karaoke_projector_button.toggled.connect(self._toggle_karaoke_projector)
         self.karaoke_volume.valueChanged.connect(self._set_karaoke_volume)
-        self.karaoke_fade_out_button.clicked.connect(lambda: self._start_karaoke_fade(0))
-        self.karaoke_fade_in_button.clicked.connect(lambda: self._start_karaoke_fade(100))
         self.karaoke_playlist.itemDoubleClicked.connect(self._play_karaoke_queue_item)
         self.beat_match.toggled.connect(self._sync_fade_mode_controls)
 
@@ -336,11 +148,6 @@ class MainWindow(QMainWindow):
         self._beat_mix_start_timer = QTimer(self)
         self._beat_mix_start_timer.setSingleShot(True)
         self._beat_mix_start_timer.timeout.connect(self._start_aligned_transition)
-
-        self._karaoke_fade_timer = QTimer(self)
-        self._karaoke_fade_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._karaoke_fade_timer.setInterval(20)
-        self._karaoke_fade_timer.timeout.connect(self._karaoke_fade_tick)
 
         self._karaoke_blink_timer = QTimer(self)
         self._karaoke_blink_timer.setInterval(600)
@@ -380,12 +187,28 @@ class MainWindow(QMainWindow):
             self._exit_fullscreen_shortcut.setEnabled(fullscreen)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched in (self.left, self.right) and event.type() in (
+            QEvent.Type.Resize, QEvent.Type.ContentsRectChange, QEvent.Type.LayoutRequest,
+        ):
+            self._sync_deck_header_layout()
         # Playback controls must not activate on Return or numeric-keypad Enter.
         if event.type() in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 event.accept()
                 return True
         return super().eventFilter(watched, event)
+
+    def _sync_deck_header_layout(self) -> None:
+        # The LEFT/RIGHT labels have different widths. A shared breakpoint keeps
+        # the action rows and playlists aligned even at the one-pixel boundary.
+        decks = (self.left, self.right)
+        two_rows = any(
+            deck.contentsRect().width() - deck.layout().contentsMargins().left()
+            - deck.layout().contentsMargins().right() < deck.playlist_header.sizeHint().width()
+            for deck in decks
+        )
+        for deck in decks:
+            deck.playlist_header.set_two_rows(two_rows)
 
     def open_search(self, preferred_side: str | None) -> None:
         if self._search_dialog is None:
@@ -398,6 +221,36 @@ class MainWindow(QMainWindow):
         self._search_dialog.raise_()
         self._search_dialog.activateWindow()
         self._search_dialog.focus_search()
+
+    def _suggestion_context(self) -> tuple[Track | None, str, bool, set[str]]:
+        decks = (self.left, self.right)
+        audible = [deck for deck in decks if deck.engine.has_playback_progress()
+                   and deck.engine._gain * deck.engine._crossfade_factor > 0]
+        deck = max(audible, key=lambda item: item.engine._gain * item.engine._crossfade_factor,
+                   default=None)
+        engines = [item.engine for item in decks]
+        if self._karaoke_window is not None:
+            engines.append(self._karaoke_window.engine)
+        busy = bool(self._transition_active or self._pending_transition or self._manual_crossfade)
+        for engine in engines:
+            analysis = engine._waveform_analysis
+            busy = busy or engine.is_preparing() or engine._pool.activeThreadCount() > 0
+            busy = busy or bool(engine._prefetch_task)
+            busy = busy or bool(analysis and (analysis._active or analysis._pending))
+        for dialog in (self._search_dialog, self._karaoke_window):
+            if dialog is not None:
+                busy = busy or bool(dialog._active_tasks) or dialog._pool.activeThreadCount() > 0
+        if self._karaoke_window and self._karaoke_window.engine.is_playing():
+            busy = True
+        excluded = {youtube_id(track) for item in decks for track in item.tracks}
+        return (deck.engine.track if deck else None, deck.side if deck else "", busy, excluded)
+
+    def _add_suggestion(self, side: str, track: Track) -> None:
+        deck = self.left if side == "left" else self.right
+        if any(youtube_id(item) == youtube_id(track) for item in deck.tracks):
+            return
+        deck.add_track(Track.from_dict(track.to_dict()), load_if_empty=False)
+        self.status.setText(f"ADDED TO {side.upper()}:\n{track.title}")
 
     def _search_similar(self, side: str) -> None:
         deck = self.left if side == "left" else self.right
@@ -499,45 +352,14 @@ class MainWindow(QMainWindow):
         self.karaoke_projector_button.blockSignals(False)
 
     def _set_karaoke_volume(self, value: int) -> None:
-        self._karaoke_fade_timer.stop()
         if self._karaoke_window is not None:
             self._karaoke_window.volume.setValue(value)
 
     def _sync_karaoke_volume(self, value: int) -> None:
-        if not self._karaoke_fade_updating:
-            self._karaoke_fade_timer.stop()
         if self.karaoke_volume.value() != value:
             self.karaoke_volume.blockSignals(True)
             self.karaoke_volume.setValue(value)
             self.karaoke_volume.blockSignals(False)
-
-    def _start_karaoke_fade(self, target: int) -> None:
-        karaoke = self._get_karaoke_window()
-        if target > 0 and not karaoke.engine.is_playing():
-            karaoke.play()
-        self._karaoke_fade_start = self.karaoke_volume.value()
-        self._karaoke_fade_target = target
-        self._karaoke_fade_started = time.monotonic()
-        self._karaoke_fade_timer.start()
-
-    def _karaoke_fade_tick(self) -> None:
-        duration = max(0.25, float(self.karaoke_fade_seconds.value()))
-        progress = min(1.0, (time.monotonic() - self._karaoke_fade_started) / duration)
-        eased = progress * progress * (3.0 - 2.0 * progress)
-        value = round(
-            self._karaoke_fade_start
-            + (self._karaoke_fade_target - self._karaoke_fade_start) * eased
-        )
-        # Temporarily block the user-change handler so the animation does not
-        # cancel its own timer; the karaoke slider keeps both UIs synchronized.
-        self.karaoke_volume.blockSignals(True)
-        self.karaoke_volume.setValue(value)
-        self.karaoke_volume.blockSignals(False)
-        self._karaoke_fade_updating = True
-        self._get_karaoke_window().volume.setValue(value)
-        self._karaoke_fade_updating = False
-        if progress >= 1.0:
-            self._karaoke_fade_timer.stop()
 
     def _add_search_track(self, side: str, track: Track) -> None:
         deck = self.left if side == "left" else self.right
@@ -1080,6 +902,7 @@ class MainWindow(QMainWindow):
                 return
             self._karaoke_window.engine.stop()
             self._karaoke_window.close()
+        self.song_suggestions.shutdown()
         self._karaoke_blink_timer.stop()
         if self._logo_pulse is not None:
             self._logo_pulse.stop()

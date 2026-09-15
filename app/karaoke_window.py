@@ -8,27 +8,17 @@ from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequ
 from PySide6.QtMultimedia import QVideoFrame, QVideoSink
 from PySide6.QtWidgets import (
     QDialog,
-    QCheckBox,
-    QComboBox,
-    QFrame,
     QGraphicsBlurEffect,
     QGraphicsScene,
-    QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
-    QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
-    QPushButton,
-    QScrollArea,
-    QSlider,
-    QSpinBox,
-    QSplitter,
-    QVBoxLayout,
     QWidget,
 )
+
+from .ui_loader import load_ui
 
 from .media import QtMediaDeckEngine
 from .models import Track
@@ -236,9 +226,9 @@ class ProjectorWindow(QMainWindow):
         self._close_confirmation_open = False
         self.setWindowTitle("EncoreMix Karaoke Video - Move to projector, then press F11")
         self.resize(960, 540)
-        self.video = ProjectorVideoWidget()
-        self.video.setStyleSheet("background:#000;")
-        self.setCentralWidget(self.video)
+        load_ui(self, "projector_window.ui", {
+            "ProjectorVideoWidget": lambda parent, _name: ProjectorVideoWidget(parent),
+        })
         self.statusBar().showMessage(
             "F11/double-click: fullscreen · Esc: exit fullscreen · Close from the main Karaoke Remote"
         )
@@ -312,24 +302,19 @@ class KaraokeWindow(QDialog):
         self._reply_targets: dict[QNetworkReply, QLabel] = {}
         self._network.finished.connect(self._thumbnail_finished)
 
-        self.engine = QtMediaDeckEngine(self, video=True)
-        self.queueChanged.connect(self._prefetch_next)
+        self.engine = QtMediaDeckEngine(self, video=True, prepare=False)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(14, 14, 14, 14)
-        title = QLabel("KARAOKE DECK")
-        title.setObjectName("AppTitle")
-        root.addWidget(title)
-
+        ui = load_ui(self, "karaoke_window.ui", {
+            "VideoDisplayWidget": lambda parent, _name: VideoDisplayWidget(parent),
+        })
+        self.resize(min(1400, available.width() - 40), min(850, available.height() - 60))
         if parent is not None and hasattr(parent, "left") and hasattr(parent, "crossfader"):
-            root.addWidget(self._build_main_remote(parent))
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
-        splitter.addWidget(self._build_search_panel())
-        splitter.addWidget(self._build_deck_panel())
-        splitter.setSizes([570, 800])
-        root.addWidget(splitter, 1)
+            self._connect_main_remote(parent)
+        else:
+            ui.main_remote.hide()
+        self._connect_search_panel()
+        self._connect_deck_panel()
+        ui.splitter.setSizes([570, 800])
 
         # The output belongs to the main window so hiding the lab (including
         # Escape) cannot hide the audience's video or idle logo.
@@ -355,69 +340,12 @@ class KaraokeWindow(QDialog):
             return
         super().keyPressEvent(event)
 
-    def _build_main_remote(self, main_window: QWidget) -> QWidget:
-        panel = QFrame()
-        panel.setObjectName("DeckFrame")
-        layout = QHBoxLayout(panel)
-        layout.setContentsMargins(12, 9, 12, 9)
-        layout.setSpacing(10)
-
-        title = QLabel("MAIN MIX REMOTE")
-        title.setStyleSheet("font-weight:800;letter-spacing:1px;")
-        layout.addWidget(title)
-
-        side_label = QLabel("SIDE")
-        side_label.setObjectName("Subtle")
-        self.main_side = QComboBox()
-        self.main_side.addItems(["LEFT", "RIGHT"])
-        layout.addWidget(side_label)
-        layout.addWidget(self.main_side)
-
-        self.main_play_button = QPushButton("PLAY / PAUSE")
-        self.main_play_button.setAutoDefault(False)
-        layout.addWidget(self.main_play_button)
-
-        volume_label = QLabel("VOLUME")
-        volume_label.setObjectName("Subtle")
-        self.main_volume = QSlider(Qt.Orientation.Horizontal)
-        self.main_volume.setRange(0, 100)
-        self.main_volume.setMaximumWidth(170)
-        layout.addWidget(volume_label)
-        layout.addWidget(self.main_volume, 1)
-
-        fade_label = QLabel("FADE")
-        fade_label.setObjectName("Subtle")
-        self.main_crossfader = QSlider(Qt.Orientation.Horizontal)
-        self.main_crossfader.setObjectName("Crossfader")
+    def _connect_main_remote(self, main_window: QWidget) -> None:
         self.main_crossfader.setRange(main_window.crossfader.minimum(), main_window.crossfader.maximum())
         self.main_crossfader.setValue(main_window.crossfader.value())
-        self.main_crossfader.setMaximumWidth(230)
-        layout.addWidget(QLabel("L"))
-        layout.addWidget(fade_label)
-        layout.addWidget(self.main_crossfader, 1)
-        layout.addWidget(QLabel("R"))
-
-        self.main_beat_match = QCheckBox("BEAT")
         self.main_beat_match.setChecked(main_window.beat_match.isChecked())
-        self.main_beat_match.setToolTip("Use beat-based bars or timed seconds for Auto Mix")
-        layout.addWidget(self.main_beat_match)
-
-        self.main_fade_time_label = QLabel("TIME")
-        self.main_fade_time_label.setObjectName("Subtle")
-        self.main_fade_seconds = QSpinBox()
-        self.main_fade_seconds.setRange(2, 10)
         self.main_fade_seconds.setValue(main_window.fade_seconds.value())
-        self.main_fade_seconds.setSuffix(" s")
-        layout.addWidget(self.main_fade_time_label)
-        layout.addWidget(self.main_fade_seconds)
-
-        self.main_fade_bars_label = QLabel("BARS")
-        self.main_fade_bars_label.setObjectName("Subtle")
-        self.main_fade_bars = QSpinBox()
-        self.main_fade_bars.setRange(1, 8)
         self.main_fade_bars.setValue(main_window.fade_bars.value())
-        layout.addWidget(self.main_fade_bars_label)
-        layout.addWidget(self.main_fade_bars)
 
         self.main_side.currentIndexChanged.connect(
             lambda _index: self._sync_selected_main_volume(main_window)
@@ -443,7 +371,6 @@ class KaraokeWindow(QDialog):
         )
         self._sync_selected_main_volume(main_window)
         self._sync_main_fade_mode(main_window)
-        return panel
 
     def _selected_main_deck(self, main_window: QWidget):
         return main_window.left if self.main_side.currentIndex() == 0 else main_window.right
@@ -472,121 +399,11 @@ class KaraokeWindow(QDialog):
         self.main_fade_time_label.setVisible(not beat_mode)
         self.main_fade_seconds.setVisible(not beat_mode)
 
-    def _build_search_panel(self) -> QWidget:
-        panel = QFrame()
-        panel.setObjectName("CenterConsole")
-        panel.setMinimumWidth(340)
-        layout = QVBoxLayout(panel)
-
-        heading = QLabel("KARAOKE SEARCH")
-        heading.setStyleSheet("font-size:14pt;font-weight:800;")
-        layout.addWidget(heading)
-
-        search_row = QHBoxLayout()
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Artist and song title")
-        self.search_button = QPushButton("SEARCH")
-        self.search_button.setObjectName("HotButton")
-        search_row.addWidget(self.search_edit, 1)
-        search_row.addWidget(self.search_button)
-        layout.addLayout(search_row)
-
-        self.search_status = QLabel('Every query automatically includes "karaoke" and searches YouTube only.')
-        self.search_status.setObjectName("Subtle")
-        self.search_status.setWordWrap(True)
-        layout.addWidget(self.search_status)
-
-        self.results_widget = QWidget()
-        self.results_layout = QVBoxLayout(self.results_widget)
-        self.results_layout.setContentsMargins(0, 0, 0, 0)
-        self.results_layout.setSpacing(10)
-        self.results_layout.addStretch(1)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self.results_widget)
-        layout.addWidget(scroll, 1)
-
+    def _connect_search_panel(self) -> None:
         self.search_button.clicked.connect(self.search)
         self.search_edit.returnPressed.connect(self.search)
-        return panel
 
-    def _build_deck_panel(self) -> QWidget:
-        panel = QFrame()
-        panel.setObjectName("CenterConsole")
-        layout = QVBoxLayout(panel)
-
-        header = QHBoxLayout()
-        deck_title = QLabel("DECK KARAOKE")
-        deck_title.setObjectName("DeckBadge")
-        self.state_label = QLabel("EMPTY")
-        self.state_label.setObjectName("Subtle")
-        header.addWidget(deck_title)
-        header.addStretch(1)
-        header.addWidget(self.state_label)
-        layout.addLayout(header)
-
-        self.video = VideoDisplayWidget()
-        self.video.setMinimumHeight(330)
-        layout.addWidget(self.video, 3)
-
-        self.now_playing = QLabel("Nothing loaded")
-        self.now_playing.setObjectName("TrackTitle")
-        self.now_playing.setWordWrap(True)
-        layout.addWidget(self.now_playing)
-
-        time_row = QHBoxLayout()
-        self.elapsed = QLabel("00:00")
-        self.remaining = QLabel("-00:00")
-        self.elapsed.setObjectName("TimeLabel")
-        self.remaining.setObjectName("TimeLabel")
-        time_row.addWidget(self.elapsed)
-        time_row.addStretch(1)
-        time_row.addWidget(self.remaining)
-        layout.addLayout(time_row)
-
-        self.progress = QSlider(Qt.Orientation.Horizontal)
-        self.progress.setRange(0, 1000)
-        layout.addWidget(self.progress)
-
-        controls = QHBoxLayout()
-        self.play_button = QPushButton("PLAY / PAUSE")
-        self.play_button.setObjectName("HotButton")
-        self.stop_button = QPushButton("STOP")
-        self.next_button = QPushButton("NEXT")
-        self.projector_button = QPushButton("PROJECTOR WINDOW")
-        self.projector_button.setObjectName("PrimaryButton")
-        volume_label = QLabel("VOLUME")
-        volume_label.setObjectName("Subtle")
-        self.volume = QSlider(Qt.Orientation.Horizontal)
-        self.volume.setRange(0, 100)
-        self.volume.setValue(100)
-        self.volume.setMaximumWidth(150)
-        for widget in (
-            self.play_button,
-            self.stop_button,
-            self.next_button,
-            self.projector_button,
-            volume_label,
-            self.volume,
-        ):
-            controls.addWidget(widget)
-        layout.addLayout(controls)
-
-        queue_header = QHBoxLayout()
-        queue_header.addWidget(QLabel("KARAOKE QUEUE"))
-        self.show_artist = QCheckBox("SHOW SINGER ON PROJECTOR")
-        self.show_artist.setChecked(True)
-        queue_header.addWidget(self.show_artist)
-        queue_header.addStretch(1)
-        self.reenable_button = QPushButton("RE-ENABLE")
-        self.remove_button = QPushButton("REMOVE")
-        queue_header.addWidget(self.reenable_button)
-        queue_header.addWidget(self.remove_button)
-        layout.addLayout(queue_header)
-
-        self.playlist = QListWidget()
-        layout.addWidget(self.playlist, 2)
-
+    def _connect_deck_panel(self) -> None:
         self.play_button.clicked.connect(self.play)
         self.stop_button.clicked.connect(self.engine.stop)
         self.next_button.clicked.connect(lambda: self._advance(autoplay=True))
@@ -598,7 +415,6 @@ class KaraokeWindow(QDialog):
         self.reenable_button.clicked.connect(self._reenable_selected)
         self.remove_button.clicked.connect(self._remove_selected)
         self.show_artist.toggled.connect(self._update_projector_artist)
-        return panel
 
     def search(self) -> None:
         query = self.search_edit.text().strip()
@@ -684,18 +500,6 @@ class KaraokeWindow(QDialog):
             return
         self.tracks[index].played = False
         self._load_index(index, autoplay=True)
-
-    def _prefetch_next(self) -> None:
-        """Prepare the next singer's media while preserving active playback."""
-        if not (0 <= self.current_index < len(self.tracks)) or self.engine.track is not self.tracks[self.current_index]:
-            self.engine.prefetch(None)
-            return
-        for offset in range(1, len(self.tracks)):
-            track = self.tracks[(self.current_index + offset) % len(self.tracks)]
-            if not track.played:
-                self.engine.prefetch(track)
-                return
-        self.engine.prefetch(None)
 
     def play(self) -> None:
         if self.current_index < 0 or self.tracks[self.current_index].played:

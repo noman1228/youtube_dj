@@ -43,6 +43,26 @@ class PreparedPlaybackTest(unittest.TestCase):
         path.write_bytes(b"offline fixture, never decoded")
         return PreparedMedia(directory, path, 240, "PREPARED AUDIO")
 
+    def test_streaming_load_bypasses_music_pool_and_never_prefetches(self):
+        engine = QtMediaDeckEngine(video=True, prepare=False)
+        self.assertIsNot(engine._pool, QtMediaDeckEngine()._pool)
+        engine._pool = Mock()
+        engine._player = Mock(spec=QMediaPlayer)
+        states = Mock()
+        engine.stateChanged.connect(states)
+        try:
+            engine.prefetch(self.engine._track)
+            engine._pool.start.assert_not_called()
+            engine.load(self.engine._track, autoplay=True)
+            task = engine._pool.start.call_args.args[0]
+            self.assertFalse(task.prepare)
+            self.assertEqual(task.max_height, 480)
+            self.assertEqual(states.call_args.args[0], "LOADING")
+            engine.stop()
+            self.assertTrue(task.cancelled.is_set())
+        finally:
+            engine.stop()
+
     def test_every_prepared_type_plays_local_without_network_watchdog(self):
         for suffix in ("webm", "mp4", "m3u8"):
             with self.subTest(suffix=suffix):

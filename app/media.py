@@ -44,6 +44,7 @@ class PreparedMedia:
 _prepared_cache: OrderedDict[tuple[str, bool, int | None], PreparedMedia] = OrderedDict()
 _cache_lock = threading.Lock()
 _prepare_pool: QThreadPool | None = None
+_stream_pool: QThreadPool | None = None
 
 
 def _media_pool() -> QThreadPool:
@@ -57,6 +58,15 @@ def _media_pool() -> QThreadPool:
     return _prepare_pool
 
 
+def _stream_resolve_pool() -> QThreadPool:
+    global _stream_pool
+    if _stream_pool is None:
+        # Interactive karaoke loads must not wait behind full music downloads.
+        _stream_pool = QThreadPool()
+        _stream_pool.setMaxThreadCount(2)
+    return _stream_pool
+
+
 class ResolveSignals(QObject):
     resolved = Signal(int, object, object, int, str)
     failed = Signal(int, str)
@@ -64,12 +74,13 @@ class ResolveSignals(QObject):
 
 
 class ResolveTask(QRunnable):
-    def __init__(self, generation: int, track: Track, video: bool = False, max_height: int | None = None) -> None:
+    def __init__(self, generation: int, track: Track, video: bool = False, max_height: int | None = None, prepare: bool = True) -> None:
         super().__init__()
         self.generation = generation
         self.track = track
         self.video = video
         self.max_height = max_height
+        self.prepare = prepare
         self.signals = ResolveSignals()
         self.cancelled = threading.Event()
 
@@ -93,7 +104,7 @@ class ResolveTask(QRunnable):
 
             key = (self.track.webpage_url, self.video, self.max_height)
             with _cache_lock:
-                cached = _prepared_cache.get(key)
+                cached = _prepared_cache.get(key) if self.prepare else None
                 if cached and cached.path.is_file():
                     _prepared_cache.move_to_end(key)
                 else:
@@ -125,13 +136,12 @@ class ResolveTask(QRunnable):
                 # also support an existing Node.js installation.
                 "js_runtimes": javascript_runtimes(),
             }
-            directory = tempfile.TemporaryDirectory(prefix="encoremix-", ignore_cleanup_errors=True)
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(self.track.webpage_url, download=False)
                 self._check_cancelled()
                 if not info:
                     raise RuntimeError("No playable stream information was returned.")
-                if info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming", "post_live"}:
+                if self.prepare and (info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming", "post_live"}):
                     raise RuntimeError("Live streams cannot be fully prepared for uninterrupted playback.")
                 hls_source = None
                 if info and info.get("format_id") == "hls-master":
@@ -140,6 +150,18 @@ class ResolveTask(QRunnable):
                     if len(manifest) > 1_048_576:
                         raise RuntimeError("The HLS playlist is too large to open safely.")
                     hls_source = select_hls_video(manifest.decode("utf-8-sig"), info["url"], self.max_height)
+                if not self.prepare:
+                    stream_url = info.get("url")
+                    if not stream_url:
+                        raise RuntimeError("No playable audio stream was found.")
+                    duration = int(info.get("duration") or self.track.duration_seconds or 0)
+                    description = (
+                        f"{hls_source.height}P VIDEO + AUDIO" if hls_source
+                        else _stream_description(dict(info), stream_url)
+                    )
+                    self._emit_resolved(self.generation, self.track, hls_source or stream_url, duration, description)
+                    return
+                directory = tempfile.TemporaryDirectory(prefix="encoremix-", ignore_cleanup_errors=True)
                 self.signals.preparing.emit(self.generation)
                 path = prepare_media(ydl, info, hls_source, Path(directory.name), self.cancelled)
                 self._check_cancelled()
@@ -401,9 +423,11 @@ class QtMediaDeckEngine(QObject):
         parent: QObject | None = None,
         video: bool = False,
         capture_waveform: bool = False,
+        prepare: bool = True,
     ) -> None:
         super().__init__(parent)
-        self._pool = _media_pool()
+        self._prepare = prepare
+        self._pool = _media_pool() if prepare else _stream_resolve_pool()
         self._resolve_tasks: dict[int, ResolveTask] = {}
         self._prefetch_task: ResolveTask | None = None
         self._prefetch_generation = 0
@@ -514,7 +538,7 @@ class QtMediaDeckEngine(QObject):
             self._resolve_tasks[prefetch.generation] = prefetch
         else:
             self._prefetch_task = prefetch
-        self._video_max_height = None
+        self._video_max_height = 480 if self._video and not self._prepare else None
         self._video_height = 0
         self._hls_source = None
         self._player.setPlaybackRate(1.0)
@@ -541,6 +565,8 @@ class QtMediaDeckEngine(QObject):
         )
 
     def prefetch(self, track: Track | None) -> None:
+        if not self._prepare:
+            return
         if track and self._prefetch_url == track.webpage_url and (
             self._prefetch_task or self._prefetched_media
         ):
@@ -617,8 +643,8 @@ class QtMediaDeckEngine(QObject):
         self._resolving = True
         self._autoplay_after_resolve = autoplay
         self._stream_info = "VIDEO STREAM" if self._video else "AUDIO STREAM"
-        self.stateChanged.emit("PREPARING")
-        task = ResolveTask(self._generation, track, video=self._video, max_height=self._video_max_height)
+        self.stateChanged.emit("PREPARING" if self._prepare else "LOADING")
+        task = ResolveTask(self._generation, track, video=self._video, max_height=self._video_max_height, prepare=self._prepare)
         self._resolve_tasks[self._generation] = task
         task.signals.resolved.connect(self._resolved)
         task.signals.failed.connect(self._resolve_failed)

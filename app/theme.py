@@ -90,13 +90,38 @@ QFrame#CenterConsole QCheckBox,
 QFrame#CenterConsole QSlider {
     background: transparent;
 }
+QFrame#MixControls {
+    background: #111722;
+    border: 3px solid #263247;
+    border-top: 3px solid #00d8ff;
+    border-radius: 12px;
+}
+QLabel#ConsoleSectionTitle {
+    color: #00d8ff;
+    font-size: 11pt;
+    font-weight: 900;
+    letter-spacing: 1px;
+}
+QFrame#CenterConsole QLabel#Subtle { font-size: 8pt; }
+QFrame#CenterConsole QSpinBox { font-size: 8pt; padding: 4px 32px 4px 6px; }
+QFrame#CenterConsole QCheckBox { font-size: 8pt; }
+QFrame#SongSuggestions {
+    background: #111722;
+    border: 3px solid #263247;
+    border-radius: 12px;
+}
+QLabel#SuggestionTitle { font-size: 8pt; font-weight: 800; color: #8f9db2; }
+QListWidget#SongSuggestionList { font-size: 8pt; }
+QListWidget#SongSuggestionList::item { padding: 0px 4px; }
 QFrame#KaraokeRemote {
     background: #111722;
     border: 3px solid #263247;
-    border-radius: 14px;
+    border-top: 3px solid #ff2fa7;
+    border-radius: 12px;
 }
 QLabel#KaraokeRemoteTitle {
     background: transparent;
+    font-size: 11pt;
     font-weight: 900;
 }
 QFrame#KaraokeRemote[playing="true"] {
@@ -136,6 +161,8 @@ QPushButton:hover { background: #253249; border-color: #60799e; }
 QPushButton:pressed { background: #111722; }
 QPushButton#PrimaryButton { background: #006f84; border-color: #00d8ff; }
 QPushButton#HotButton { background: #7b1552; border-color: #ff2fa7; }
+QPushButton#HotButton:hover { background: #a51c6e; border-color: #ff82ce; }
+QPushButton#HotButton:pressed { background: #510e36; border-color: #ff2fa7; }
 QPushButton#PlayButton { font-size: 13pt; min-width: 58px; min-height: 36px; }
 QPushButton#MixerButton { font-size: 8pt; padding: 6px 3px; }
 QPushButton[compactControl="true"] { font-size: 8pt; padding: 5px 3px; }
